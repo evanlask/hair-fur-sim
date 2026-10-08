@@ -1,4 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#1f2937" />
-  <circle cx="16" cy="16" r="7" fill="none" stroke="#fff" stroke-width="3" />
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd38a" />
+      <stop offset="1" stop-color="#d9822b" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#14151b" />
+  <g fill="none" stroke="url(#g)" stroke-width="1.7" stroke-linecap="round">
+    <path d="M21.5 16Q25.2 18.35 27.26 21.44" />
+    <path d="M20.96 18.39Q23.27 22.11 23.78 25.78" />
+    <path d="M19.43 20.3Q19.9 24.66 18.77 28.19" />
+    <path d="M17.22 21.36Q15.76 25.5 13.2 28.18" />
+    <path d="M14.78 21.36Q11.66 24.45 8.19 25.76" />
+    <path d="M12.57 20.3Q8.42 21.73 4.73 21.41" />
+    <path d="M11.04 18.39Q6.69 17.88 3.5 15.98" />
+    <path d="M10.5 16Q6.8 13.65 4.74 10.56" />
+    <path d="M11.04 13.61Q8.73 9.89 8.22 6.22" />
+    <path d="M12.57 11.7Q12.1 7.34 13.23 3.81" />
+    <path d="M14.78 10.64Q16.24 6.5 18.8 3.82" />
+    <path d="M17.22 10.64Q20.34 7.55 23.81 6.24" />
+    <path d="M19.43 11.7Q23.58 10.27 27.27 10.59" />
+    <path d="M20.96 13.61Q25.31 14.12 28.5 16.02" />
+  </g>
+  <circle cx="16" cy="16" r="6" fill="url(#g)" />
 </svg>

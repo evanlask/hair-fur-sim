@@ -1,54 +1,139 @@
 :root {
-  color-scheme: light dark;
-  font-family:
+  color-scheme: dark;
+  --panel: rgba(18, 19, 24, 0.82);
+  --text: #e8e6e3;
+  --muted: #9a9aa3;
+  --accent: #f0b35a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d0e12;
+  color: var(--text);
+  font:
+    13px/1.4 ui-sans-serif,
     system-ui,
     -apple-system,
     'Segoe UI',
     sans-serif;
-  line-height: 1.6;
 }
 
-body {
+#app,
+#app canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+#examples {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel);
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  z-index: 10;
+}
+
+#examples a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 5px;
+}
+
+#examples a:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#examples a.active {
+  color: #111;
+  background: var(--accent);
+}
+
+#hud {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-radius: 8px;
+  font:
+    11px/1.45 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--muted);
+  white-space: pre;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#hud b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+#status {
+  position: fixed;
+  inset: 0;
   display: grid;
   place-items: center;
-  min-height: 100dvh;
-  margin: 0;
-  padding: 2rem;
-}
-
-main {
-  max-width: 40rem;
   text-align: center;
+  padding: 24px;
+  background: rgba(10, 10, 14, 0.75);
+  font-size: 15px;
+  z-index: 20;
 }
 
-h1 {
-  margin-block-end: 0.5rem;
-  font-size: clamp(1.75rem, 5vw, 2.5rem);
+#status[hidden] {
+  display: none;
 }
 
-code {
-  padding: 0.15em 0.4em;
-  border-radius: 0.25rem;
-  background: color-mix(in srgb, currentcolor 12%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.9em;
+#status .box {
+  max-width: 560px;
+  padding: 20px 24px;
+  background: var(--panel);
+  border-radius: 10px;
 }
 
-button {
-  padding: 0.6em 1.2em;
-  border: 1px solid color-mix(in srgb, currentcolor 25%, transparent);
-  border-radius: 0.5rem;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
+#status h2 {
+  margin: 0 0 8px;
+  color: var(--accent);
 }
 
-button:hover {
-  border-color: currentcolor;
+.tp-dfwv {
+  width: 320px !important;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  z-index: 10;
 }
 
-button:focus-visible {
-  outline: 2px solid currentcolor;
-  outline-offset: 2px;
+#status .box {
+  text-align: left;
+}
+
+#status .help {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  line-height: 1.55;
+  font-size: 14px;
+}
+
+#status .help li {
+  margin-bottom: 6px;
 }

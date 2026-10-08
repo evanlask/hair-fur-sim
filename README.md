@@ -1,120 +1,141 @@
-# viteplus-starter
+# Hair & Fur Simulation
 
-A minimal starter for quick browser experiments, built on [Vite+](https://viteplus.dev).
-TypeScript is set up and ready, but plain JavaScript works just as well.
+Real-time strand hair and fur in the browser, simulated and rendered entirely on the GPU with
+[three.js](https://threejs.org) (r186) WebGPU and TSL compute shaders.
 
-Everything comes from one dependency. Vite+ bundles the dev server and bundler
-(Vite 8 + Rolldown), the test runner (Vitest), the linter (Oxlint), the formatter
-(Oxfmt), the type checker (tsgolint) and the commit-hook runner — so there is no
-ESLint, Prettier, husky or lint-staged to install or configure.
+A few thousand **guide hairs** are simulated with position-based physics, and hundreds of thousands of
+**render strands** are interpolated from them every frame, then shaded with a Marschner hair BSDF, deep-shadowed and
+drawn as camera-facing ribbons.
 
-## Quick start
+**Live demo:** <https://evanlask.github.io/hair-fur-sim/>
 
-Needs Node 24 (see `.node-version`). The `vp` CLI ships as a real binary in
-`node_modules/.bin`, so there is nothing to install globally.
+It needs a browser with WebGPU: Chrome or Edge, or Safari 26+. Other browsers get an explanatory message instead
+of a blank page.
+
+## Examples
+
+Switch between them with the tabs at the top left.
+
+| Example       | What it shows                                                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hair Ball** | Long hair on a sphere, torus, rounded box, capsule or torus knot. Drag to shake it, or pick a motion preset, add wind and change the colour.              |
+| **Fox**       | Dense, fine fur on the animated Khronos Fox (walk, run, survey), coloured from its texture, with bone capsules as colliders.                              |
+| **Wayne**     | A two-part 1980s mullet on a head scan on a marble pedestal. Press **M** for music and the head bangs to the beat.                                        |
+| **Yeti**      | Long shaggy fur on an animated cartoon yeti: a beard, short fur on the face and ears, bare skin where it belongs. It collides with the moving body's SDF. |
+
+## Controls
+
+| Input                    | Action                                           |
+| ------------------------ | ------------------------------------------------ |
+| Left-drag on empty space | Orbit                                            |
+| Right-drag               | Pan                                              |
+| Mouse wheel              | Zoom                                             |
+| Left-drag the subject    | Grab and shake it; it springs back when released |
+| **H**                    | Show / hide help                                 |
+| **M**                    | Play / stop music (Wayne)                        |
+| **T**                    | Tap tempo (Wayne)                                |
+
+Every setting in the panels on the right updates live:
+
+- **Rendering:** quality preset (strand and guide counts, shadow resolution, solver substeps), render scale,
+  antialiasing (MSAA 4×, FXAA, SMAA, TAA or off), tone mapping.
+- **Lighting:** presets from studio to sunset and evening, exposure, environment strength and per-lamp settings.
+- **Example:** shape, animation, head motion and music for the current scene.
+- **Hair / Fur:** colour presets, groom sliders that regrow the hair, then physics, style and shading.
+- **Debug:** show or hide the body, hair, guides and colliders; pause, step and reset the simulation.
+- **Saved settings:** save and load in the browser, export or import JSON, reset to defaults.
+
+The HUD at the bottom left shows FPS, CPU time, GPU compute and render time, and guide and strand counts.
+
+## How it works
+
+```
+CPU, once per groom    sample roots → grow guides from style fields → bind each render strand to 3 guides
+
+GPU, every frame       skin the growth mesh             1 thread per vertex
+                       compute root frames              1 thread per guide
+                       solve guides (all substeps)      1 thread per guide
+                       interpolate render strands       1 thread per strand
+                       render hair shadow maps          front/back hair depth + opaque depth
+                       shade strand points              1 thread per point
+                       draw ribbons                     instanced, 16 strands per instance
+```
+
+**Grooming** (`src/hair/groom/`). Guide roots are Poisson-disk sampled over the growth mesh. Each guide is grown from
+a style's fields (mask, length, comb direction, lift, droop, wave) and pushed out of colliders. Render strands are
+bound to their three nearest guides and shuffled so that any prefix is a uniform subset, which makes level of detail a
+matter of drawing fewer strands. Rest shapes are stored in per-root frames, so they follow the skinned surface.
+
+**Simulation** (`src/hair/sim/solver.ts`). This combines TressFX-style shape constraints with Dynamic
+Follow-The-Leader (Müller et al. 2012):
+
+- Verlet integration with gravity, damping, a "follow root" inertia control, and air drag towards gusty wind.
+- Global and local shape constraints keep the groomed style and its bending.
+- Follow-The-Leader length constraints with collision handling inside the sweep, plus velocity correction and
+  friction against moving colliders.
+- Substeps have a fixed length and every coefficient is time-step independent, so uneven frame pacing doesn't add
+  energy and all quality presets behave the same.
+- Colliders are bone-attached capsules, analytic SDF shapes and baked mesh SDFs. A skinned SDF follows its mesh's
+  skinning every frame by warm-started inverse skinning per cell (`sdfSkin.ts`). This is how the yeti's whole body
+  pushes its fur around.
+
+**Interpolation** (`interpolate.ts`). Each render strand samples its guides along a Catmull-Rom spline, blends them in
+the root frame (short fur) or in world space (long hanging hair), and adds clumping, curl and frizz on a
+rotation-minimising frame.
+
+**Shading** (`shade.ts`, `src/hair/render/`). Lighting runs in compute once per strand point. It uses Karis's
+Marschner approximation (R, TT and TRT lobes) for three lamps, multiple-scattering diffuse, and spherical-harmonics
+environment light. A deep-shadow approximation gives self-shadowing from the key light, alongside opaque-caster
+shadows and root ambient occlusion.
+
+**Rendering** (`HairMaterial.ts`). Strands are tapered, camera-facing ribbons with a minimum pixel width. With MSAA,
+each strand keeps each sample with a probability equal to its coverage, so many thin overlapping strands add up to
+the right opacity. With TAA the coverage pattern changes every frame, and the hair writes its own motion vectors so it
+doesn't ghost.
+
+## Limitations
+
+- There's no hair-hair interaction (no volume or voxel pass), so strands pass through each other.
+- Very long fur on concave areas of the body can clip slightly.
+
+## Development
+
+You need Node 24 (see `.node-version`). The toolchain is [Vite+](https://viteplus.dev), which provides the dev
+server, bundler, Vitest, Oxlint and Oxfmt from a single dependency, all configured in `vite.config.ts`.
 
 ```sh
 npm install
 npm run dev
 ```
 
-| Script               | What it does                            |
-| -------------------- | --------------------------------------- |
-| `npm run build`      | Production build into `dist/`           |
-| `npm run check`      | Format, lint and type-check in one pass |
-| `npm run check:fix`  | Same, but writes fixes                  |
-| `npm run clean`      | Remove everything generated             |
-| `npm run dev`        | Dev server with HMR                     |
-| `npm run preview`    | Serve the built output                  |
-| `npm run test`       | Run tests once                          |
-| `npm run test:watch` | Run tests in watch mode                 |
+Then open the URL Vite prints. The models, environment maps and music are committed under `public/`, so nothing else
+needs downloading.
 
-`check` covers type checking too, so there is no separate `typecheck` script.
-`clean` removes `node_modules` along with the build output, so follow it with
-`npm install`.
+### Scripts
 
-## Layout
+| Script               | What it does                                              |
+| -------------------- | --------------------------------------------------------- |
+| `npm run dev`        | Dev server with HMR                                       |
+| `npm run build`      | Production build into `dist/`                             |
+| `npm run preview`    | Serve the production build                                |
+| `npm run check`      | Format check, lint and type-check in one pass             |
+| `npm run check:fix`  | Same, writing fixes                                       |
+| `npm run test`       | Run the unit tests once                                   |
+| `npm run test:watch` | Run the unit tests in watch mode                          |
+| `npm run clean`      | Remove `dist/`, `node_modules/` and other generated files |
 
-```
-.
-├── public/          Copied to dist/ untouched
-├── src/
-│   ├── index.html   Entry point — the Vite root is src/, not the repo root
-│   ├── main.ts
-│   ├── counter.ts
-│   ├── counter.test.ts
-│   └── style.css
-├── vite.config.ts   Dev/build, format, lint, test and pre-commit config
-└── tsconfig.json
-```
+## Credits
 
-`index.html` lives in `src/` so the repo root holds only configuration, which is
-why `vite.config.ts` sets `root: 'src'`, `publicDir: '../public'` and
-`build.outDir: '../dist'`.
+Third-party assets keep their own licenses; the license files are next to each asset in `public/`.
 
-## Configuration
-
-`vite.config.ts` is the single source of truth — formatting, linting, tests and
-staged-file checks are all blocks in that one file. Keep them there: `vp` ignores
-`.oxlintrc.json` and `.oxfmtrc.json` entirely, and while a `vitest.config.ts`
-_is_ read, it silently overrides the `test` block. Two traps worth knowing:
-
-- A `plugins` array in the `lint` block **replaces** the defaults (`unicorn`,
-  `oxc`, `typescript`) rather than extending them. List those too.
-- `compilerOptions.baseUrl` in `tsconfig.json` silently disables type-aware
-  linting and type checking. For aliases, use `paths` without `baseUrl`.
-
-Vite+ is in beta and has shipped breaking changes in patch releases, so
-`vite-plus` is pinned exactly. Move it with `npx vp upgrade`.
-
-## Tests
-
-Tests sit next to the code they cover as `*.test.ts`. Import helpers from
-`vite-plus/test`, **not** `vitest` — a lint rule flags the wrong one:
-
-```ts
-import { describe, expect, it } from 'vite-plus/test';
-```
-
-## Using JavaScript instead of TypeScript
-
-Nothing here is TypeScript-only, and mixing the two is fine. To drop to plain JS:
-
-1. Rename the `.ts` files to `.js` (`allowJs` is already on).
-2. Update the `<script type="module" src="/main.ts">` tag in `src/index.html`.
-3. Widen the test glob in `vite.config.ts` to `['**/*.test.{js,ts}']`.
-
-## Commit hooks
-
-`.vite-hooks/pre-commit` runs `vp staged`, which formats and autofixes staged
-files, re-stages the result, and fails the commit on anything it cannot fix. The
-dispatcher installs itself on `npm install` via the `prepare` script. Commit the
-`pre-commit` file; the generated `.vite-hooks/_/` directory ignores itself.
-
-To skip the hook for one commit:
-
-```sh
-VP_GIT_HOOKS=0 git commit -m "wip"
-```
-
-## Continuous integration
-
-`.github/workflows/ci.yml` runs check, test and build on every pull request and
-on pushes to any branch except `main`.
-
-## Deploying to GitHub Pages
-
-`.github/workflows/deploy.yml` runs the same checks and then deploys, on every
-push to `main`. It needs one manual step in the new repo: **Settings → Pages →
-Source: GitHub Actions**.
-
-The build uses a relative `base`, so it works both at a project subpath
-(`user.github.io/repo-name/`) and at a domain root with no config change.
-
-## After copying this template
-
-- [ ] `npm install`, then commit the `package-lock.json` it generates — CI runs
-      `npm ci` and needs one
-- [ ] Update `name`, `description` and `license` in `package.json`
-- [ ] Enable GitHub Pages (see above)
-- [ ] Replace this README
+- **Fox** from the [Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox):
+  model © 2014 PixelMannen ([CC0](https://creativecommons.org/publicdomain/zero/1.0/)), rigging and animation ©
+  2014 tomkranis ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), glTF conversion © 2017 @AsoboStudio and
+  @scurest ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
+- **Head scan** (Wayne): "Infinite, 3D Head Scan" by Lee Perry-Smith
+  ([CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)), based on a work at www.triplegangers.com, via the
+  three.js examples.
+- **Yeti** © 2017 BabylonJS, from [BabylonJS Assets](https://github.com/BabylonJS/Assets/tree/master/meshes/Yeti)
+  ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Changed: the sculpted beard and forearm fur are hidden
+  and replaced by simulated fur, and the body material is re-shaded.
+- **Environment maps** from [Poly Haven](https://polyhaven.com) (CC0), via the three.js repository.

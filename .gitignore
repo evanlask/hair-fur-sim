@@ -11,8 +11,9 @@ dist
 dist-ssr
 *.local
 
-# Test coverage
+# Test output
 coverage
+.vitest/
 
 # Environment
 .env
@@ -20,9 +21,8 @@ coverage
 !.env.example
 
 # Editor directories and files
-# .vscode is committed on purpose. The leading `!.vscode/` re-includes the
-# directory itself, which matters if a global gitignore excludes it — git will
-# not descend into an ignored directory, so the negations below need it first.
+# .vscode/settings.json and extensions.json are committed. `!.vscode/` comes first in case a global gitignore
+# excludes the directory: git won't look inside an ignored directory, so the negations below would do nothing.
 !.vscode/
 .vscode/*
 !.vscode/settings.json

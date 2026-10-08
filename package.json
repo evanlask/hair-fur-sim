@@ -1,9 +1,22 @@
 {
-  "name": "viteplus-starter",
-  "version": "0.0.0",
+  "name": "hair-fur-sim",
+  "version": "0.1.0",
   "private": true,
-  "description": "A starter for quick browser experiments, built on Vite+.",
+  "description": "Real-time GPU strand hair and fur simulation with guide hairs, built on three.js WebGPU and TSL.",
+  "keywords": [
+    "fur",
+    "hair",
+    "simulation",
+    "three.js",
+    "tsl",
+    "webgpu"
+  ],
+  "homepage": "https://evanlask.github.io/hair-fur-sim/",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evanlask/hair-fur-sim.git"
+  },
   "type": "module",
   "scripts": {
     "build": "vp build",
@@ -16,9 +29,20 @@
     "test": "vp test --passWithNoTests",
     "test:watch": "vp test watch"
   },
+  "dependencies": {
+    "@tweakpane/plugin-essentials": "0.2.1",
+    "three": "0.186.1",
+    "tweakpane": "4.0.5"
+  },
   "devDependencies": {
+    "@tweakpane/core": "^2.0.5",
+    "@types/three": "0.186.0",
+    "@webgpu/types": "0.1.74",
     "typescript": "^7.0.0",
-    "vite-plus": "0.2.8"
+    "vite-plus": "1.1.0"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0"
   },
   "engines": {
     "node": ">=24"

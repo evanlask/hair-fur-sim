@@ -35,15 +35,18 @@ Switch between them with the tabs at the top left.
 | **M**                    | Play / stop music (Wayne)                        |
 | **T**                    | Tap tempo (Wayne)                                |
 
-Every setting in the panels on the right updates live:
+Every setting in the panel on the right updates live, and hovering one shows what it does:
 
+- **Example:** shape, motion and speed for the current scene (and music for Wayne).
+- **Hair / Fur:** colour presets and the **Basics** sliders (style hold, bend stiffness, damping, gravity, curl,
+  frizz, clump, width, shine), groom sliders that regrow the hair, wind, then the **Motion**, **Strand shape**,
+  **Color & shine** and **Performance** folders and a reset button. Wayne has a tab for each hair group.
+- **Lighting:** looks from studio to sunset and evening, exposure, environment strength, hair shadow on skin and
+  per-lamp settings.
 - **Rendering:** quality preset (strand and guide counts, shadow resolution, solver substeps), render scale,
   antialiasing (MSAA 4×, FXAA, SMAA, TAA or off), tone mapping.
-- **Lighting:** presets from studio to sunset and evening, exposure, environment strength and per-lamp settings.
-- **Example:** shape, animation, head motion and music for the current scene.
-- **Hair / Fur:** colour presets, groom sliders that regrow the hair, then physics, style and shading.
-- **Debug:** show or hide the body, hair, guides and colliders; pause, step and reset the simulation.
-- **Saved settings:** save and load in the browser, export or import JSON, reset to defaults.
+- **View & simulation:** show or hide the body, hair, guides and colliders; slow motion, pause, step and reset.
+- **Save / load:** save and load in the browser, export or import JSON, reset to defaults.
 
 The HUD at the bottom left shows FPS, CPU time, GPU compute and render time, and guide and strand counts.
 

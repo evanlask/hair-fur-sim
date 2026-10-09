@@ -1,10 +1,12 @@
+import type { FolderApi } from 'tweakpane';
+
 import type { FrameInfo } from '../app/App';
-import { addHairParamFolders, addSimulationControls, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { MusicPanel } from '../app/MusicPanel';
 import { motionForTrack } from '../audio/library';
 import { applyHairColor, hairColorOptions, type HairColorName } from '../hair/colorPresets';
-import type { ShadingParams } from '../hair/params';
+import { hairWind, type ShadingParams } from '../hair/params';
 import type { Example, ExampleContext } from './Example';
 import {
   MulletCharacter,
@@ -31,7 +33,6 @@ export class MulletExample implements Example {
     showStrands: true,
     showGuides: false,
     showColliders: false,
-    paused: false,
     hairColor: 'brown' as HairColorName,
   };
   private shadingDefaults!: Record<keyof MulletParams, ShadingParams>;
@@ -73,6 +74,16 @@ export class MulletExample implements Example {
     lights.params.keyAzimuth = 40;
     lights.params.keyElevation = 40;
     lights.apply();
+    // Wind starts off; turned on, a gusty breeze from the front, slightly above, streams the party hair back.
+    Object.assign(hairWind.params, {
+      strength: 6.52,
+      azimuth: 11.74,
+      elevation: 9.78,
+      turbulence: 0.37,
+      frequency: 0.8,
+      gust: 1.13,
+    });
+    hairWind.sync();
 
     const sync = () => {
       for (const grp of this.character.hair.groups) grp.syncParams();
@@ -98,41 +109,23 @@ export class MulletExample implements Example {
       f,
       this.settings,
       'tempo',
-      { min: 0.3, max: 4, label: 'tempo (no music)' },
+      {
+        min: 0.3,
+        max: 4,
+        label: 'speed',
+        hint: 'Tempo of the head motion when no music is playing (music sets its own).',
+      },
       () => (this.character.tempo = this.settings.tempo),
     );
     num(
       f,
       this.settings,
       'amount',
-      { min: 0, max: 1.6, label: 'motion amount' },
+      { min: 0, max: 1.6, label: 'amount' },
       () => (this.character.amount = this.settings.amount),
     );
 
-    this.music = new MusicPanel(gui);
-    this.character.beatClock = this.music.beat;
-    this.character.loudness = this.music.loudness;
-    const setMotion = (motion: HeadMotion) => {
-      this.settings.motion = motion;
-      this.character.motion = motion;
-      motionBinding.refresh(); // may fire 'change', which clears autoMotion
-      this.autoMotion = false;
-    };
-    this.music.onPlay = (source) => {
-      // An idle or still head takes the track's own motion (see MUSIC_LIBRARY). A motion you picked is kept
-      // and locks to the beat.
-      if (this.autoMotion || this.settings.motion === 'idle' || this.settings.motion === 'still') {
-        if (!this.autoMotion) this.motionBeforeMusic = this.settings.motion;
-        setMotion(motionForTrack(source));
-        this.autoMotion = true;
-      }
-    };
-    // When the music stops, a motion the track picked goes back to idle (or still); yours keeps going.
-    this.music.onStop = () => {
-      if (this.autoMotion) setMotion(this.motionBeforeMusic);
-    };
-
-    const hairFolder = gui.folder('Hair', false);
+    const hairFolder = gui.folder('Hair', true);
     hairFolder
       .addBinding(this.settings, 'hairColor', { label: 'hair color', options: hairColorOptions() })
       .on('change', () => {
@@ -143,15 +136,49 @@ export class MulletExample implements Example {
       });
     const g = gui.folder('Groom (regrows hair)', false, hairFolder);
     const rebuild = () => this.scheduleRegroom();
-    num(g, this.groom, 'hairlineOffset', { min: -0.6, max: 0.8, label: 'hairline' }, rebuild);
-    num(g, this.groom, 'topLength', { min: 0.01, max: 0.15, label: 'top length' }, rebuild);
-    num(g, this.groom, 'frontLength', { min: 0.01, max: 0.15, label: 'front length' }, rebuild);
-    num(g, this.groom, 'sideLength', { min: 0.005, max: 0.1, label: 'side length' }, rebuild);
-    num(g, this.groom, 'backLength', { min: 0.05, max: 0.45, label: 'party length' }, rebuild);
-    num(g, this.groom, 'partyStart', { min: 90, max: 150, label: 'party start (°)' }, rebuild);
-    num(g, this.groom, 'partyTop', { min: 0.5, max: 3.5, label: 'party top' }, rebuild);
-    num(g, this.groom, 'lift', { min: 0, max: 1, label: 'feather lift' }, rebuild);
-    num(g, this.groom, 'perm', { min: 0, max: 0.03, label: 'perm wave' }, rebuild);
+    num(
+      g,
+      this.groom,
+      'hairlineOffset',
+      { min: -0.6, max: 0.8, label: 'hairline', hint: 'Moves the hairline: positive lowers it.' },
+      rebuild,
+    );
+    num(g, this.groom, 'topLength', { min: 1, max: 15, scale: 100, label: 'top length (cm)' }, rebuild);
+    num(g, this.groom, 'frontLength', { min: 1, max: 15, scale: 100, label: 'front length (cm)' }, rebuild);
+    num(g, this.groom, 'sideLength', { min: 0.5, max: 10, scale: 100, label: 'side length (cm)' }, rebuild);
+    num(g, this.groom, 'backLength', { min: 5, max: 45, scale: 100, label: 'party length (cm)' }, rebuild);
+    num(
+      g,
+      this.groom,
+      'partyStart',
+      {
+        min: 90,
+        max: 150,
+        label: 'party start (°)',
+        hint: 'Where the long back starts, in degrees from the front.',
+      },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'partyTop',
+      {
+        min: 0.5,
+        max: 3.5,
+        label: 'party height',
+        hint: 'How far the long back reaches up the back of the head.',
+      },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'lift',
+      { min: 0, max: 1, label: 'feather lift', hint: 'How much the top is blown up and back.' },
+      rebuild,
+    );
+    num(g, this.groom, 'perm', { min: 0, max: 30, scale: 1000, label: 'perm wave (mm)' }, rebuild);
     num(
       g,
       this.groom,
@@ -175,30 +202,65 @@ export class MulletExample implements Example {
       rebuild,
     );
 
-    // The groom groups share one set of folders, switched with tabs.
-    const groups = hairFolder.addTab({ pages: [{ title: 'Business' }, { title: 'Party' }] });
-    addHairParamFolders(groups.pages[0], this.params.business, sync);
-    addHairParamFolders(groups.pages[1], this.params.party, sync);
+    // Wind is shared by both groups, so it sits above their tabs.
+    addWindFolder(hairFolder);
+    // Each groom group has its own Basics and folders, switched with tabs.
+    const groups = hairFolder.addTab({ pages: [{ title: 'Business (top)' }, { title: 'Party (back)' }] });
+    (['business', 'party'] as const).forEach((k, i) => {
+      addHairBasics(groups.pages[i], this.params[k], sync);
+      addHairFolders(groups.pages[i], this.params[k], sync);
+    });
     sync();
 
-    const debug = gui.folder('Debug', false);
+    this.music = new MusicPanel(gui);
+    this.character.beatClock = this.music.beat;
+    this.character.loudness = this.music.loudness;
+    const setMotion = (motion: HeadMotion) => {
+      this.settings.motion = motion;
+      this.character.motion = motion;
+      motionBinding.refresh(); // may fire 'change', which clears autoMotion
+      this.autoMotion = false;
+    };
+    this.music.onPlay = (source) => {
+      // An idle or still head takes the track's own motion (see MUSIC_LIBRARY). A motion you picked is kept
+      // and locks to the beat.
+      if (this.autoMotion || this.settings.motion === 'idle' || this.settings.motion === 'still') {
+        if (!this.autoMotion) this.motionBeforeMusic = this.settings.motion;
+        setMotion(motionForTrack(source));
+        this.autoMotion = true;
+      }
+    };
+    // When the music stops, a motion the track picked goes back to idle (or still); yours keeps going.
+    this.music.onStop = () => {
+      if (this.autoMotion) setMotion(this.motionBeforeMusic);
+    };
+  }
+
+  viewControls(f: FolderApi): void {
     toggle(
-      debug,
+      f,
       this.settings,
       'showBody',
       () => (this.character.mesh.visible = this.settings.showBody),
       'show bust',
     );
-    toggle(debug, this.settings, 'showStrands', () => this.applyVisibility(), 'show hair');
-    toggle(debug, this.settings, 'showGuides', () => this.applyVisibility(), 'show guides');
+    toggle(f, this.settings, 'showStrands', () => this.applyVisibility(), 'show hair');
     toggle(
-      debug,
+      f,
+      this.settings,
+      'showGuides',
+      () => this.applyVisibility(),
+      'show guides',
+      'Show the simulated guide hairs the drawn strands follow.',
+    );
+    toggle(
+      f,
       this.settings,
       'showColliders',
       () => (this.character.colliderDebug.group.visible = this.settings.showColliders),
       'show colliders',
+      'Show the shapes the hair collides with.',
     );
-    addSimulationControls(debug, hair, this.settings);
   }
 
   private applyVisibility(): void {
@@ -211,7 +273,7 @@ export class MulletExample implements Example {
   }
 
   update(info: FrameInfo): void {
-    this.music.update(info.dt);
+    this.music.update(info.realDt);
     this.character.beatDivision = this.music.sync.division;
     this.drag.update(info.dt);
     this.character.update(info.dt);

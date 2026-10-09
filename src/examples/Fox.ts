@@ -1,5 +1,7 @@
+import type { FolderApi } from 'tweakpane';
+
 import type { FrameInfo } from '../app/App';
-import { addHairParamFolders, addSimulationControls, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
 import { mergeHairParams, type HairParamsData } from '../hair/params';
 import type { Example, ExampleContext } from './Example';
 import {
@@ -78,7 +80,6 @@ export class FoxExample implements Example {
     showStrands: true,
     showGuides: false,
     showColliders: false,
-    paused: false,
   };
   private rebuildTimer = 0;
 
@@ -95,10 +96,10 @@ export class FoxExample implements Example {
     await this.spawn();
 
     const f = gui.folder('Fox', true);
-    f.addBinding(this.settings, 'animation', { options: { survey: 'Survey', walk: 'Walk', run: 'Run' } }).on(
-      'change',
-      () => this.foxes.forEach((fx) => fx.setAnimation(this.settings.animation)),
-    );
+    f.addBinding(this.settings, 'animation', {
+      label: 'motion',
+      options: { survey: 'Survey', walk: 'Walk', run: 'Run' },
+    }).on('change', () => this.foxes.forEach((fx) => fx.setAnimation(this.settings.animation)));
     num(f, this.settings, 'speed', { min: 0.1, max: 2, label: 'speed' }, () =>
       this.foxes.forEach((fx) => (fx.speedScale = this.settings.speed)),
     );
@@ -114,38 +115,90 @@ export class FoxExample implements Example {
     );
     toggle(f, this.settings, 'twoFoxes', () => this.spawn(), 'two foxes');
 
-    const fur = gui.folder('Fur', false);
+    const fur = gui.folder('Fur', true);
+    const sync = () => this.syncAll();
+    addHairBasics(fur, this.params, sync);
     const g = gui.folder('Groom (regrows fur)', false, fur);
     const rebuild = () => this.scheduleRegroom();
     num(g, this.groom, 'lengthScale', { min: 0.3, max: 3, label: 'length scale' }, rebuild);
-    num(g, this.groom, 'tailLength', { min: 0.01, max: 0.2, label: 'tail length' }, rebuild);
-    num(g, this.groom, 'ruffLength', { min: 0.01, max: 0.12, label: 'ruff length' }, rebuild);
-    num(g, this.groom, 'lengthVariation', { min: 0, max: 0.9, label: 'strand length var.' }, rebuild);
-    num(g, this.groom, 'guideCount', { min: 200, max: 8000, step: 50, label: 'guides' }, rebuild);
-    num(g, this.groom, 'strandCount', { min: 5000, max: 500000, step: 5000, label: 'strands' }, rebuild);
-    num(g, this.groom, 'guideParticles', { min: 4, max: 16, step: 1, label: 'guide particles' }, rebuild);
-    num(g, this.groom, 'strandPoints', { min: 4, max: 16, step: 1, label: 'strand points' }, rebuild);
+    num(g, this.groom, 'tailLength', { min: 1, max: 20, scale: 100, label: 'tail length (cm)' }, rebuild);
+    num(g, this.groom, 'ruffLength', { min: 1, max: 12, scale: 100, label: 'ruff length (cm)' }, rebuild);
+    num(
+      g,
+      this.groom,
+      'lengthVariation',
+      {
+        min: 0,
+        max: 0.9,
+        label: 'length variation',
+        hint: 'Random shortening of individual strands.',
+      },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'guideCount',
+      { min: 200, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
+      rebuild,
+    );
+    num(g, this.groom, 'strandCount', { min: 5000, max: 500000, step: 5000, label: 'strand count' }, rebuild);
+    num(
+      g,
+      this.groom,
+      'guideParticles',
+      {
+        min: 4,
+        max: 16,
+        step: 1,
+        label: 'points per guide',
+        hint: 'Simulated points along each guide: more bends more smoothly but costs speed.',
+      },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'strandPoints',
+      {
+        min: 4,
+        max: 16,
+        step: 1,
+        label: 'points per strand',
+        hint: 'Drawn points along each strand: more gives smoother curls.',
+      },
+      rebuild,
+    );
 
-    addHairParamFolders(fur, this.params, () => this.syncAll());
+    addWindFolder(fur);
+    addHairFolders(fur, this.params, sync);
+  }
 
-    const debug = gui.folder('Debug', false);
+  viewControls(f: FolderApi): void {
     toggle(
-      debug,
+      f,
       this.settings,
       'showBody',
       () => this.foxes.forEach((fx) => (fx.mesh.visible = this.settings.showBody)),
       'show body',
     );
-    toggle(debug, this.settings, 'showStrands', () => this.applyVisibility(), 'show fur');
-    toggle(debug, this.settings, 'showGuides', () => this.applyVisibility(), 'show guides');
+    toggle(f, this.settings, 'showStrands', () => this.applyVisibility(), 'show fur');
     toggle(
-      debug,
+      f,
+      this.settings,
+      'showGuides',
+      () => this.applyVisibility(),
+      'show guides',
+      'Show the simulated guide hairs the drawn strands follow.',
+    );
+    toggle(
+      f,
       this.settings,
       'showColliders',
       () => this.foxes.forEach((fx) => (fx.colliderDebug.group.visible = this.settings.showColliders)),
       'show colliders',
+      'Show the shapes the fur collides with.',
     );
-    addSimulationControls(debug, ctx.hair, this.settings);
   }
 
   private syncAll(): void {

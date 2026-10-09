@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
 
+import { dirFromAngles } from '../util/angles';
+
 export interface LightParams {
   keyAzimuth: number;
   keyElevation: number;
@@ -38,12 +40,6 @@ export const defaultLightParams = (): LightParams => ({
   exposure: 1.0,
   shadowMapSize: 2048,
 });
-
-function dirFromAngles(azDeg: number, elDeg: number, out: THREE.Vector3): THREE.Vector3 {
-  const az = THREE.MathUtils.degToRad(azDeg);
-  const el = THREE.MathUtils.degToRad(elDeg);
-  return out.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
-}
 
 /** Studio three-point rig. The key light casts (opaque) shadows; rim light sells hair translucency. */
 export class LightRig {

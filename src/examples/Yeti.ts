@@ -1,5 +1,7 @@
+import type { FolderApi } from 'tweakpane';
+
 import type { FrameInfo } from '../app/App';
-import { addHairParamFolders, addSimulationControls, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { applyHairColor, hairColorOptions, type HairColorName } from '../hair/colorPresets';
 import { mergeHairParams, type HairParamsData, type ShadingParams } from '../hair/params';
@@ -88,7 +90,6 @@ export class YetiExample implements Example {
     showFur: true,
     showGuides: false,
     showColliders: false,
-    paused: false,
   };
   private rebuildTimer = 0;
 
@@ -126,7 +127,7 @@ export class YetiExample implements Example {
       f,
       this.settings,
       'speed',
-      { min: 0.1, max: 2, label: 'animation speed' },
+      { min: 0.1, max: 2, label: 'speed' },
       () => (this.character.speed = this.settings.speed),
     );
 
@@ -134,7 +135,7 @@ export class YetiExample implements Example {
       for (const g of this.character.hair.groups) g.syncParams();
       this.character.furTint.value.set(this.params.shading.rootColor);
     };
-    const fur = gui.folder('Fur', false);
+    const fur = gui.folder('Fur', true);
     // The 'brown' preset restores this example's defaults, which for the yeti is its own frost look.
     const furOptions = Object.fromEntries(
       Object.entries(hairColorOptions()).map(([label, value]) => [
@@ -149,37 +150,100 @@ export class YetiExample implements Example {
         sync();
         gui.pane.refresh();
       });
+    addHairBasics(fur, this.params, sync);
     const g = gui.folder('Groom (regrows fur)', false, fur);
     const rebuild = () => this.scheduleRegroom();
     num(g, this.groom, 'lengthScale', { min: 0.3, max: 2.5, label: 'length scale' }, rebuild);
-    num(g, this.groom, 'beardLength', { min: 0.02, max: 0.2, label: 'beard length' }, rebuild);
-    num(g, this.groom, 'lengthVariation', { min: 0, max: 0.9, label: 'strand length var.' }, rebuild);
-    num(g, this.groom, 'spots', { min: 0, max: 1, label: 'spots' }, rebuild);
-    num(g, this.groom, 'guideCount', { min: 300, max: 8000, step: 50, label: 'guides' }, rebuild);
-    num(g, this.groom, 'strandCount', { min: 10000, max: 500000, step: 5000, label: 'strands' }, rebuild);
-    num(g, this.groom, 'guideParticles', { min: 4, max: 16, step: 1, label: 'guide particles' }, rebuild);
-    num(g, this.groom, 'strandPoints', { min: 4, max: 16, step: 1, label: 'strand points' }, rebuild);
-    addHairParamFolders(fur, this.params, sync);
+    num(g, this.groom, 'beardLength', { min: 2, max: 20, scale: 100, label: 'beard length (cm)' }, rebuild);
+    num(
+      g,
+      this.groom,
+      'lengthVariation',
+      {
+        min: 0,
+        max: 0.9,
+        label: 'length variation',
+        hint: 'Random shortening of individual strands.',
+      },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'spots',
+      { min: 0, max: 1, label: 'spots', hint: 'Amount of the violet spot pattern.' },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'guideCount',
+      { min: 300, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'strandCount',
+      { min: 10000, max: 500000, step: 5000, label: 'strand count' },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'guideParticles',
+      {
+        min: 4,
+        max: 16,
+        step: 1,
+        label: 'points per guide',
+        hint: 'Simulated points along each guide: more bends more smoothly but costs speed.',
+      },
+      rebuild,
+    );
+    num(
+      g,
+      this.groom,
+      'strandPoints',
+      {
+        min: 4,
+        max: 16,
+        step: 1,
+        label: 'points per strand',
+        hint: 'Drawn points along each strand: more gives smoother curls.',
+      },
+      rebuild,
+    );
+    addWindFolder(fur);
+    addHairFolders(fur, this.params, sync);
     sync();
+  }
 
-    const debug = gui.folder('Debug', false);
+  viewControls(f: FolderApi): void {
     toggle(
-      debug,
+      f,
       this.settings,
       'showBody',
       () => (this.character.mesh.visible = this.settings.showBody),
       'show body',
     );
-    toggle(debug, this.settings, 'showFur', () => this.applyVisibility(), 'show fur');
-    toggle(debug, this.settings, 'showGuides', () => this.applyVisibility(), 'show guides');
+    toggle(f, this.settings, 'showFur', () => this.applyVisibility(), 'show fur');
     toggle(
-      debug,
+      f,
+      this.settings,
+      'showGuides',
+      () => this.applyVisibility(),
+      'show guides',
+      'Show the simulated guide hairs the drawn strands follow.',
+    );
+    toggle(
+      f,
       this.settings,
       'showColliders',
       () => (this.character.colliderDebug.group.visible = this.settings.showColliders),
       'show colliders',
+      'Show the shapes the fur collides with.',
     );
-    addSimulationControls(debug, hair, this.settings);
   }
 
   private applyVisibility(): void {

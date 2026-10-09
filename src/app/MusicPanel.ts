@@ -3,7 +3,7 @@ import type { FolderApi, ButtonApi } from 'tweakpane';
 import { METAL_RIFF, MUSIC_LIBRARY, trackLabel } from '../audio/library';
 import { METAL_BPM_RANGE, MusicPlayer, TRACK_BPM_RANGE, type MusicSource } from '../audio/MusicPlayer';
 import type { Gui } from './Gui';
-import { num, toggle } from './Gui';
+import { num, tip, toggle } from './Gui';
 
 export interface MusicSync {
   /** Lock head motions to the music's beat while it plays. */
@@ -57,17 +57,34 @@ export class MusicPanel {
 
     // Beat sync: how the head follows the music, plus tempo fixes for when the beat grid feels off.
     const b = gui.folder('Beat sync', false, f);
-    toggle(b, this.sync, 'enabled', () => {}, 'sync head to beat');
-    b.addBinding(this.sync, 'division', {
-      label: 'move',
-      options: {
-        'every ½ beat (2× speed)': 0.5,
-        'on the beat': 1,
-        'every 2 beats (½ speed)': 2,
-        'every 4 beats (¼ speed)': 4,
-      },
-    });
-    toggle(b, this.sync, 'react', () => {}, 'react to loudness');
+    toggle(
+      b,
+      this.sync,
+      'enabled',
+      () => {},
+      'sync head to beat',
+      'Lock the head motion to the beat while music plays.',
+    );
+    tip(
+      b.addBinding(this.sync, 'division', {
+        label: 'move',
+        options: {
+          'every ½ beat (2× speed)': 0.5,
+          'on the beat': 1,
+          'every 2 beats (½ speed)': 2,
+          'every 4 beats (¼ speed)': 4,
+        },
+      }),
+      'How often the head moves relative to the beat.',
+    );
+    toggle(
+      b,
+      this.sync,
+      'react',
+      () => {},
+      'react to loudness',
+      'Bigger head motion when the music is louder.',
+    );
     this.metalBpmBinding = num(
       b,
       this.ui,
@@ -86,7 +103,14 @@ export class MusicPanel {
       b,
       this.ui,
       'trackBpm',
-      { min: TRACK_BPM_RANGE[0], max: TRACK_BPM_RANGE[1], step: 0.01, label: 'track BPM' },
+      {
+        min: TRACK_BPM_RANGE[0],
+        max: TRACK_BPM_RANGE[1],
+        step: 0.01,
+        digits: 2,
+        label: 'track BPM',
+        hint: "The track's tempo (beats per minute); fix it here if the head drifts off the beat.",
+      },
       () => {
         // refresh() echoes the grid's tempo back rounded to the slider step: only apply real edits, so
         // precomputed tempos like 86.491 aren't overwritten just by showing them.
@@ -98,7 +122,13 @@ export class MusicPanel {
       b,
       this.ui,
       'syncOffsetMs',
-      { min: -300, max: 300, step: 1, label: 'sync offset (ms)' },
+      {
+        min: -300,
+        max: 300,
+        step: 1,
+        label: 'sync offset (ms)',
+        hint: 'Shifts the head motion earlier (negative) or later (positive) against the music.',
+      },
       () => (p.syncOffsetMs = this.ui.syncOffsetMs),
     );
     b.addButton({ title: 'Tap tempo (T)' }).on('click', () => this.tap());

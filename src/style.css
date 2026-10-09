@@ -117,10 +117,20 @@ body {
 }
 
 .tp-dfwv {
-  width: 320px !important;
+  width: 360px !important;
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   z-index: 10;
+}
+
+/* Section titles inside panel folders (see heading() in Gui.ts). */
+.tp-sprv.gui-heading {
+  padding: 6px 4px 0;
+  color: var(--lbl-fg);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
 }
 
 #status .box {

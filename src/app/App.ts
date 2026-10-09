@@ -52,7 +52,11 @@ async function buildRequiredLimits(): Promise<Record<string, number>> {
 }
 
 export interface FrameInfo {
+  /** Simulated seconds this frame: real time × `App.timeScale`. */
   dt: number;
+  /** Real seconds this frame (camera, music, FPS). */
+  realDt: number;
+  /** Simulated seconds since start. */
   time: number;
   frame: number;
 }
@@ -72,6 +76,9 @@ export class App {
   };
   /** Called every frame before rendering. */
   onUpdate: ((info: FrameInfo) => void) | null = null;
+  /** Speed of simulated time (slow motion below 1); the camera keeps real time. */
+  timeScale = 1;
+  private simTime = 0;
   /** Called after the main render (e.g. stats). */
   onAfterRender: ((info: FrameInfo) => void) | null = null;
   /** Called right before the main render, after onUpdate (e.g. extra passes). */
@@ -229,9 +236,11 @@ export class App {
     try {
       this.timer.update(timestamp);
       // Cap dt so a stall (e.g. returning to a background tab) doesn't hit the simulation with one huge step.
-      const dt = Math.min(this.timer.getDelta(), 1 / 20);
-      const info: FrameInfo = { dt, time: this.timer.getElapsed(), frame: this.frame++ };
-      this.controls.update(dt);
+      const realDt = Math.min(this.timer.getDelta(), 1 / 20);
+      const dt = realDt * this.timeScale;
+      this.simTime += dt;
+      const info: FrameInfo = { dt, realDt, time: this.simTime, frame: this.frame++ };
+      this.controls.update(realDt);
       this.onUpdate?.(info);
       this.onBeforeRender?.(info);
       this.renderScene();
@@ -255,11 +264,10 @@ export class App {
     void this.renderer.setAnimationLoop(null);
     const device = (this.renderer.backend as unknown as { device: GPUDevice }).device;
     const times: number[] = [];
-    let time = this.timer.getElapsed();
     for (let i = 0; i < frames + 5; i++) {
       const t0 = performance.now();
-      time += dt;
-      const info: FrameInfo = { dt, time, frame: this.frame++ };
+      this.simTime += dt;
+      const info: FrameInfo = { dt, realDt: dt, time: this.simTime, frame: this.frame++ };
       this.onUpdate?.(info);
       this.onBeforeRender?.(info);
       this.renderScene();

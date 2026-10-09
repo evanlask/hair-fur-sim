@@ -1,8 +1,9 @@
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import * as THREE from 'three/webgpu';
+import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
-import { addHairParamFolders, addSimulationControls, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { ColliderSet } from '../hair/colliders';
 import { applyHairColor, hairColorOptions, type HairColorName } from '../hair/colorPresets';
@@ -47,7 +48,6 @@ export class HairBallExample implements Example {
     showBody: true,
     showGuides: false,
     showStrands: true,
-    paused: false,
     hairColor: 'brown' as HairColorName,
   };
   private readonly groomParams: BallStyleParams = defaultBallStyle();
@@ -100,10 +100,11 @@ export class HairBallExample implements Example {
         swing: 'swing',
       },
     });
-    num(f, this.settings, 'motionSpeed', { min: 0.1, max: 3, label: 'motion speed' }, () => {});
-    num(f, this.settings, 'motionAmount', { min: 0, max: 2, label: 'motion amount' }, () => {});
+    num(f, this.settings, 'motionSpeed', { min: 0.1, max: 3, label: 'speed' }, () => {});
+    num(f, this.settings, 'motionAmount', { min: 0, max: 2, label: 'amount' }, () => {});
 
-    const hairFolder = gui.folder('Hair', false);
+    const hairFolder = gui.folder('Hair', true);
+    const sync = () => this.syncParams();
     hairFolder
       .addBinding(this.settings, 'hairColor', { label: 'hair color', options: hairColorOptions() })
       .on('change', () => {
@@ -111,51 +112,112 @@ export class HairBallExample implements Example {
         this.syncParams();
         gui.pane.refresh();
       });
+    addHairBasics(hairFolder, this.hairParams, sync);
     const groom = gui.folder('Groom (regrows hair)', false, hairFolder);
     const rebuild = () => this.scheduleRebuild();
-    num(groom, this.groomParams, 'length', { min: 0.02, max: 0.5 }, rebuild);
-    num(groom, this.groomParams, 'lengthJitter', { min: 0, max: 0.8, label: 'length jitter' }, rebuild);
+    num(groom, this.groomParams, 'length', { min: 2, max: 50, scale: 100, label: 'length (cm)' }, rebuild);
+    num(
+      groom,
+      this.groomParams,
+      'lengthJitter',
+      {
+        min: 0,
+        max: 0.8,
+        label: 'length jitter',
+        hint: 'Random length difference between guide hairs (±).',
+      },
+      rebuild,
+    );
     num(
       groom,
       this.groomParams,
       'lengthVariation',
-      { min: 0, max: 0.9, label: 'strand length var.' },
+      {
+        min: 0,
+        max: 0.9,
+        label: 'length variation',
+        hint: 'Random shortening of individual strands.',
+      },
       rebuild,
     );
-    num(groom, this.groomParams, 'lift', { min: 0, max: 1 }, rebuild);
-    num(groom, this.groomParams, 'droop', { min: 0, max: 40 }, rebuild);
-    num(groom, this.groomParams, 'wave', { min: 0, max: 0.03, label: 'wave amp' }, rebuild);
-    num(groom, this.groomParams, 'waveCount', { min: 0, max: 8, label: 'waves' }, rebuild);
-    num(groom, this.groomParams, 'guideCount', { min: 100, max: 8000, step: 50, label: 'guides' }, rebuild);
+    num(
+      groom,
+      this.groomParams,
+      'lift',
+      { min: 0, max: 1, hint: '1 = hair grows straight out, 0 = combed flat along the surface.' },
+      rebuild,
+    );
+    num(
+      groom,
+      this.groomParams,
+      'droop',
+      { min: 0, max: 40, hint: 'How quickly strands bend down towards gravity.' },
+      rebuild,
+    );
+    num(groom, this.groomParams, 'wave', { min: 0, max: 30, scale: 1000, label: 'wave size (mm)' }, rebuild);
+    num(groom, this.groomParams, 'waveCount', { min: 0, max: 8, label: 'wave count' }, rebuild);
+    num(
+      groom,
+      this.groomParams,
+      'guideCount',
+      { min: 100, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
+      rebuild,
+    );
     num(
       groom,
       this.groomParams,
       'strandCount',
-      { min: 1000, max: 400000, step: 1000, label: 'strands' },
+      {
+        min: 1000,
+        max: 400000,
+        step: 1000,
+        label: 'strand count',
+        hint: 'Drawn strands (interpolated from the guides).',
+      },
       rebuild,
     );
     num(
       groom,
       this.groomParams,
       'guideParticles',
-      { min: 4, max: 32, step: 1, label: 'guide particles' },
+      {
+        min: 4,
+        max: 32,
+        step: 1,
+        label: 'points per guide',
+        hint: 'Simulated points along each guide: more bends more smoothly but costs speed.',
+      },
       rebuild,
     );
     num(
       groom,
       this.groomParams,
       'strandPoints',
-      { min: 4, max: 48, step: 1, label: 'strand points' },
+      {
+        min: 4,
+        max: 48,
+        step: 1,
+        label: 'points per strand',
+        hint: 'Drawn points along each strand: more gives smoother curls.',
+      },
       rebuild,
     );
 
-    addHairParamFolders(hairFolder, this.hairParams, () => this.syncParams());
+    addWindFolder(hairFolder);
+    addHairFolders(hairFolder, this.hairParams, sync);
+  }
 
-    const debug = gui.folder('Debug', false);
-    toggle(debug, this.settings, 'showBody', () => (this.body.visible = this.settings.showBody), 'show body');
-    toggle(debug, this.settings, 'showStrands', () => this.applyVisibility(), 'show hair');
-    toggle(debug, this.settings, 'showGuides', () => this.applyVisibility(), 'show guides');
-    addSimulationControls(debug, ctx.hair, this.settings);
+  viewControls(f: FolderApi): void {
+    toggle(f, this.settings, 'showBody', () => (this.body.visible = this.settings.showBody), 'show body');
+    toggle(f, this.settings, 'showStrands', () => this.applyVisibility(), 'show hair');
+    toggle(
+      f,
+      this.settings,
+      'showGuides',
+      () => this.applyVisibility(),
+      'show guides',
+      'Show the simulated guide hairs the drawn strands follow.',
+    );
   }
 
   /** Pushes GUI parameter changes to the GPU; the body is tinted like the hair roots. */

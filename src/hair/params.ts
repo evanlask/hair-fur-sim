@@ -1,6 +1,8 @@
 import { uniform } from 'three/tsl';
 import * as THREE from 'three/webgpu';
 
+import { dirFromAngles } from '../util/angles';
+
 /** Reference timestep that stiffness/damping values are defined against (so presets with
  *  different substep counts behave the same). */
 export const DT_REF = 1 / 60;
@@ -18,6 +20,8 @@ export interface PhysicsParams {
   globalTip: number;
   /** Exponent of the root→tip global stiffness falloff. */
   globalCurve: number;
+  /** Fraction of the strand (from the root) the global stiffness falls off over; beyond it, the tip value. */
+  globalRange: number;
   /** Local shape stiffness per 1/60 s: keeps segment-to-segment angles (bend / curl retention). */
   localStiffness: number;
   /** Local stiffness multiplier at the tip. */
@@ -38,14 +42,23 @@ export interface PhysicsParams {
   rootPlane: number;
   /** Fraction of the strand (from the root) the root-plane constraint applies to. */
   rootPlaneRange: number;
-  windDirection: { x: number; y: number; z: number };
-  /** Wind speed in m/s. */
-  windStrength: number;
-  windTurbulence: number;
-  windFrequency: number;
-  windGust: number;
-  /** Air drag rate (1/s) pulling the perpendicular velocity towards the wind velocity. */
+  /** Air drag rate (1/s) pulling the perpendicular velocity towards the wind velocity (see `hairWind`). */
   drag: number;
+}
+
+/** Scene-wide wind (live). The air is shared; each group's `drag` sets how strongly its hair follows it. */
+export interface WindParams {
+  /** Off = still air (the solver also skips the wind noise). */
+  enabled: boolean;
+  /** Direction the wind blows from, in degrees around the vertical axis (same angles as the lamps). */
+  azimuth: number;
+  /** Degrees above the horizon the wind blows from (negative = updraft). */
+  elevation: number;
+  /** Wind speed in m/s. */
+  strength: number;
+  turbulence: number;
+  frequency: number;
+  gust: number;
 }
 
 /** Render-strand styling (live). */
@@ -110,6 +123,7 @@ export const defaultPhysics = (): PhysicsParams => ({
   globalStiffness: 0.05,
   globalTip: 0.1,
   globalCurve: 1.0,
+  globalRange: 1,
   localStiffness: 0.5,
   localTip: 0.6,
   dftlDamping: 0.9,
@@ -121,12 +135,17 @@ export const defaultPhysics = (): PhysicsParams => ({
   sdfRootRange: 0,
   rootPlane: 0.0,
   rootPlaneRange: 0.3,
-  windDirection: { x: 1, y: 0, z: 0.3 },
-  windStrength: 0,
-  windTurbulence: 0.5,
-  windFrequency: 0.8,
-  windGust: 0.5,
   drag: 2,
+});
+
+export const defaultWind = (): WindParams => ({
+  enabled: false,
+  azimuth: -105,
+  elevation: 0,
+  strength: 0,
+  turbulence: 0.5,
+  frequency: 0.8,
+  gust: 0.5,
 });
 
 export const defaultStyle = (): StyleParams => ({
@@ -202,6 +221,35 @@ const tmpColor = new THREE.Color();
 const tmpVec = new THREE.Vector3();
 
 /**
+ * The one wind every hair group feels: plain params plus uniform nodes that each group's
+ * `HairUniforms` references directly, so `sync()` updates all hair at once.
+ */
+class SharedWind {
+  readonly params = defaultWind();
+  /** Wind velocity (direction · speed) in m/s. */
+  readonly velocity = uniform(new THREE.Vector3());
+  readonly turbulence = uniform(0);
+  readonly frequency = uniform(0);
+  readonly gust = uniform(0);
+
+  constructor() {
+    this.sync();
+  }
+
+  sync(): void {
+    const w = this.params;
+    // Blows from (azimuth, elevation) towards the opposite side.
+    const speed = w.enabled ? w.strength : 0;
+    this.velocity.value.copy(dirFromAngles(w.azimuth, w.elevation, tmpVec).multiplyScalar(-speed));
+    this.turbulence.value = w.turbulence;
+    this.frequency.value = w.frequency;
+    this.gust.value = w.gust;
+  }
+}
+
+export const hairWind = new SharedWind();
+
+/**
  * Uniform nodes mirroring a HairParamsData object. `sync()` copies plain values into uniforms
  * (cheap, called when the GUI changes something); `syncFrame()` updates per-frame timing values.
  */
@@ -233,10 +281,11 @@ export class HairUniforms {
   readonly sdfRootRange = uniform(0);
   readonly rootPlane = uniform(0);
   readonly rootPlaneRange = uniform(0);
-  readonly wind = uniform(new THREE.Vector3());
-  readonly windTurbulence = uniform(0);
-  readonly windFrequency = uniform(0);
-  readonly windGust = uniform(0);
+  // wind: shared by every group (see hairWind)
+  readonly wind = hairWind.velocity;
+  readonly windTurbulence = hairWind.turbulence;
+  readonly windFrequency = hairWind.frequency;
+  readonly windGust = hairWind.gust;
   readonly drag = uniform(1);
   // style
   readonly guideBlend = uniform(1);
@@ -305,12 +354,6 @@ export class HairUniforms {
     this.sdfRootRange.value = ph.sdfRootRange;
     this.rootPlane.value = ph.rootPlane;
     this.rootPlaneRange.value = ph.rootPlaneRange;
-    tmpVec.set(ph.windDirection.x, ph.windDirection.y, ph.windDirection.z);
-    if (tmpVec.lengthSq() < 1e-8) tmpVec.set(1, 0, 0);
-    this.wind.value.copy(tmpVec.normalize().multiplyScalar(ph.windStrength));
-    this.windTurbulence.value = ph.windTurbulence;
-    this.windFrequency.value = ph.windFrequency;
-    this.windGust.value = ph.windGust;
     this.drag.value = ph.drag;
 
     const st = p.style;
@@ -381,7 +424,8 @@ export class HairUniforms {
 export function buildParticleProfile(p: PhysicsParams, particles: number, out: Float32Array): void {
   for (let k = 0; k < particles; k++) {
     const s = particles > 1 ? k / (particles - 1) : 0;
-    const g = 1 + (p.globalTip - 1) * Math.pow(s, Math.max(0.05, p.globalCurve));
+    const sg = Math.min(1, s / Math.max(0.01, p.globalRange));
+    const g = 1 + (p.globalTip - 1) * Math.pow(sg, Math.max(0.05, p.globalCurve));
     const l = 1 + (p.localTip - 1) * s;
     out[k * 4 + 0] = Math.max(0, g);
     out[k * 4 + 1] = Math.max(0, l);

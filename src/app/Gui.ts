@@ -1,10 +1,13 @@
 import * as EssentialsPlugin from '@tweakpane/plugin-essentials';
-import { Pane, type FolderApi, type TabPageApi } from 'tweakpane';
+import { Pane, type BladeApi, type FolderApi, type TabPageApi } from 'tweakpane';
 
 import type { HairSystem } from '../hair/HairSystem';
-import type { HairParamsData } from '../hair/params';
+import { deepMerge, hairWind, type HairParamsData } from '../hair/params';
+import type { App } from './App';
 
 type Container = Pane | FolderApi | TabPageApi;
+/** Any input binding (they all refresh from their object). */
+type Binding = BladeApi & { refresh(): void };
 
 export interface NumberSpec {
   min: number;
@@ -12,6 +15,10 @@ export interface NumberSpec {
   step?: number;
   label?: string;
   digits?: number;
+  /** Display multiplier, e.g. 1000 to show metres as millimetres (min / max / step are in display units). */
+  scale?: number;
+  /** Tooltip shown when hovering the row. */
+  hint?: string;
 }
 
 /** Tweakpane pane, plus the essentials plugin for its FPS graph. */
@@ -34,7 +41,25 @@ export class Gui {
   }
 }
 
-/** Binds a numeric property. Decimal places scale with the slider's range unless `digits` is set. */
+/** Sets a row's hover tooltip. */
+export function tip<T extends { element: HTMLElement }>(blade: T, hint?: string): T {
+  if (hint) blade.element.title = hint;
+  return blade;
+}
+
+/** A small section title inside a folder (a separator with text instead of a line). */
+export function heading(c: Container, text: string): void {
+  const sep = c.addBlade({ view: 'separator' });
+  const label = document.createElement('div');
+  label.textContent = text;
+  sep.element.replaceChildren(label);
+  sep.element.classList.add('gui-heading');
+}
+
+/**
+ * Binds a numeric property as a slider. Decimal places follow the step and range unless `digits` is set (whole
+ * steps show none); `scale` shows the value in other units (the object keeps its own).
+ */
 export function num<T extends object>(
   c: Container,
   obj: T,
@@ -42,16 +67,41 @@ export function num<T extends object>(
   spec: NumberSpec,
   onChange: () => void,
 ) {
-  const digits = spec.digits ?? (spec.max - spec.min <= 0.05 ? 5 : spec.max - spec.min <= 2 ? 3 : 2);
-  return c
-    .addBinding(obj, key, {
-      min: spec.min,
-      max: spec.max,
-      step: spec.step,
-      label: spec.label ?? key,
-      format: (v: number) => v.toFixed(digits),
-    })
-    .on('change', onChange);
+  const range = spec.max - spec.min;
+  const digits =
+    spec.digits ??
+    (spec.step !== undefined && spec.step >= 1
+      ? 0
+      : range <= 0.05
+        ? 5
+        : range <= 2
+          ? 3
+          : range >= 100
+            ? 1
+            : 2);
+  const s = spec.scale;
+  const target = s
+    ? {
+        get v() {
+          return (obj[key] as number) * s;
+        },
+        set v(x: number) {
+          (obj[key] as number) = x / s;
+        },
+      }
+    : obj;
+  return tip(
+    c
+      .addBinding(target as Record<string, unknown>, s ? 'v' : key, {
+        min: spec.min,
+        max: spec.max,
+        step: spec.step,
+        label: spec.label ?? key,
+        format: (v: number) => v.toFixed(digits),
+      })
+      .on('change', onChange),
+    spec.hint,
+  );
 }
 
 export function toggle<T extends object>(
@@ -60,8 +110,9 @@ export function toggle<T extends object>(
   key: keyof T & string,
   onChange: () => void,
   label?: string,
+  hint?: string,
 ) {
-  return c.addBinding(obj, key, { label: label ?? key }).on('change', onChange);
+  return tip(c.addBinding(obj, key, { label: label ?? key }).on('change', onChange), hint);
 }
 
 export function colorBinding<T extends object>(
@@ -70,115 +121,614 @@ export function colorBinding<T extends object>(
   key: keyof T & string,
   onChange: () => void,
   label?: string,
+  hint?: string,
 ) {
-  return c.addBinding(obj, key, { label: label ?? key, view: 'color' }).on('change', onChange);
+  return tip(c.addBinding(obj, key, { label: label ?? key, view: 'color' }).on('change', onChange), hint);
 }
 
-export function vec3Binding<T extends object>(
-  c: Container,
-  obj: T,
-  key: keyof T & string,
-  range: number,
-  onChange: () => void,
-  label?: string,
-) {
-  return c
-    .addBinding(obj, key, {
-      label: label ?? key,
-      x: { min: -range, max: range },
-      y: { min: -range, max: range },
-      z: { min: -range, max: range },
-    })
-    .on('change', onChange);
-}
-
-/** The end of every example's Debug folder: pause, single-step and reset the hair simulation. */
-export function addSimulationControls(c: Container, hair: HairSystem, state: { paused: boolean }): void {
+/** Pause, slow motion, single-step and reset for the hair simulation (and the examples' animation). */
+export function addSimulationControls(c: Container, app: App, hair: HairSystem): void {
+  const state = { paused: false };
+  num(
+    c,
+    app,
+    'timeScale',
+    {
+      min: 0.05,
+      max: 1,
+      label: 'playback speed',
+      hint: 'Slow motion for the simulation and animation (1 = real time). The camera stays real-time.',
+    },
+    () => {},
+  );
   toggle(c, state, 'paused', () => (hair.paused = state.paused), 'pause simulation');
   c.addButton({ title: 'Step one frame' }).on('click', () => (hair.stepOnce = true));
   c.addButton({ title: 'Reset simulation' }).on('click', () => hair.resetAll());
 }
 
-/** Adds Physics / Style / Shading folders bound to a hair group's params. */
-export function addHairParamFolders(
-  parent: Container,
-  params: HairParamsData,
-  onChange: () => void,
-  expanded = false,
-): void {
-  const ph = params.physics;
-  const st = params.style;
-  const physics = parent.addFolder({ title: 'Physics', expanded });
-  num(physics, ph, 'substeps', { min: 1, max: 12, step: 1 }, onChange);
-  vec3Binding(physics, ph, 'gravity', 20, onChange);
-  num(physics, ph, 'damping', { min: 0, max: 10, label: 'damping (1/s)' }, onChange);
-  num(physics, ph, 'drag', { min: 0, max: 20, label: 'air drag (1/s)' }, onChange);
-  num(physics, ph, 'followRoot', { min: 0, max: 1, label: 'follow root' }, onChange);
-  num(physics, ph, 'dftlDamping', { min: 0, max: 1, label: 'FTL damping' }, onChange);
-  num(physics, ph, 'maxVelocity', { min: 0.5, max: 50, label: 'max speed' }, onChange);
-  const shape = physics.addFolder({ title: 'Shape / bending', expanded: true });
-  num(shape, ph, 'globalStiffness', { min: 0, max: 1, label: 'style hold' }, onChange);
-  num(shape, ph, 'globalTip', { min: 0, max: 1, label: 'hold at tip' }, onChange);
-  num(shape, ph, 'globalCurve', { min: 0.1, max: 4, label: 'hold falloff' }, onChange);
-  num(shape, ph, 'localStiffness', { min: 0, max: 1, label: 'bend stiffness' }, onChange);
-  num(shape, ph, 'localTip', { min: 0, max: 1, label: 'bend at tip' }, onChange);
-  const col = physics.addFolder({ title: 'Collision', expanded: false });
-  num(col, ph, 'collisionMargin', { min: 0, max: 0.03, label: 'margin' }, onChange);
-  num(col, ph, 'collisionFriction', { min: 0, max: 1, label: 'friction' }, onChange);
-  num(col, ph, 'rootColliderRange', { min: 0, max: 1, label: 'root ignore range' }, onChange);
-  num(col, ph, 'sdfRootRange', { min: 0, max: 1, label: 'body ignore range' }, onChange);
-  num(col, ph, 'rootPlane', { min: 0, max: 1, label: 'skin plane' }, onChange);
-  num(col, ph, 'rootPlaneRange', { min: 0, max: 1, label: 'skin plane range' }, onChange);
-  toggle(col, st, 'collide', onChange, 'strand collision');
-  const wind = physics.addFolder({ title: 'Wind', expanded: false });
-  num(wind, ph, 'windStrength', { min: 0, max: 20, label: 'speed (m/s)' }, onChange);
-  vec3Binding(wind, ph, 'windDirection', 1, onChange, 'direction');
-  num(wind, ph, 'windTurbulence', { min: 0, max: 2, label: 'turbulence' }, onChange);
-  num(wind, ph, 'windFrequency', { min: 0.05, max: 5, label: 'frequency' }, onChange);
-  num(wind, ph, 'windGust', { min: 0, max: 2, label: 'gusts' }, onChange);
+/**
+ * Wind, felt by every hair group (each group's `air drag` sets how much it reacts). Examples add it to their
+ * Hair / Fur folder, next to the per-group folders.
+ */
+export function addWindFolder(parent: Container): FolderApi {
+  const w = hairWind.params;
+  const sync = () => hairWind.sync();
+  const wind = parent.addFolder({ title: 'Wind', expanded: false });
+  toggle(wind, w, 'enabled', sync, 'enabled', 'Turn the wind on or off.');
+  num(wind, w, 'strength', { min: 0, max: 20, label: 'speed (m/s)', hint: 'Wind speed.' }, sync);
+  num(
+    wind,
+    w,
+    'azimuth',
+    {
+      min: -180,
+      max: 180,
+      label: 'from azimuth (°)',
+      hint: 'Direction the wind blows from, around the vertical axis (same angles as the lamps; 0 = from +Z).',
+    },
+    sync,
+  );
+  num(
+    wind,
+    w,
+    'elevation',
+    {
+      min: -90,
+      max: 90,
+      label: 'from elevation (°)',
+      hint: 'Height the wind blows from: positive blows down from above, negative is an updraft.',
+    },
+    sync,
+  );
+  num(
+    wind,
+    w,
+    'turbulence',
+    { min: 0, max: 2, hint: 'Random swirls on top of the steady wind, relative to its speed.' },
+    sync,
+  );
+  num(
+    wind,
+    w,
+    'frequency',
+    {
+      min: 0.05,
+      max: 5,
+      label: 'turbulence detail',
+      hint: 'Size of the swirls: higher = smaller, busier eddies.',
+    },
+    sync,
+  );
+  num(
+    wind,
+    w,
+    'gust',
+    { min: 0, max: 2, label: 'gusts', hint: 'How strongly the wind speed pulses over time.' },
+    sync,
+  );
+  return wind;
+}
 
-  const style = parent.addFolder({ title: 'Style', expanded: false });
-  num(style, st, 'guideBlend', { min: 0, max: 1, label: 'guide blend' }, onChange);
-  num(style, st, 'clump', { min: 0, max: 1 }, onChange);
-  num(style, st, 'clumpShape', { min: 0.1, max: 5, label: 'clump shape' }, onChange);
-  style.addBlade({ view: 'separator' });
-  num(style, st, 'curlRadius', { min: 0, max: 0.03, label: 'curl radius' }, onChange);
-  num(style, st, 'curlTurns', { min: 0, max: 40, label: 'curl turns' }, onChange);
-  num(style, st, 'curlRamp', { min: 0.01, max: 1, label: 'curl ramp' }, onChange);
-  num(style, st, 'frizz', { min: 0, max: 0.02 }, onChange);
-  num(style, st, 'frizzFrequency', { min: 0.5, max: 30, label: 'frizz freq' }, onChange);
-  style.addBlade({ view: 'separator' });
-  num(style, st, 'rootWidth', { min: 0.00002, max: 0.003, label: 'root width', digits: 5 }, onChange);
-  num(style, st, 'tipWidth', { min: 0, max: 0.003, label: 'tip width', digits: 5 }, onChange);
-  num(style, st, 'taper', { min: 0.1, max: 5 }, onChange);
-  num(style, st, 'minPixelWidth', { min: 0.25, max: 3, label: 'min px width' }, onChange);
-  style.addBlade({ view: 'separator' });
-  num(style, st, 'density', { min: 0.01, max: 1 }, onChange);
-  toggle(style, st, 'lodEnabled', onChange, 'auto LOD');
-  num(style, st, 'lodStrandsPerPixel', { min: 0.5, max: 40, label: 'LOD strands/px' }, onChange);
-  num(style, st, 'lodWidthExponent', { min: 0, max: 1, label: 'LOD width comp.' }, onChange);
+// ---------------------------------------------------------------------------------------------------------------
+// Hair group controls
 
-  const sh = params.shading;
-  const shading = parent.addFolder({ title: 'Shading', expanded: false });
-  colorBinding(shading, sh, 'rootColor', onChange, 'root color');
-  colorBinding(shading, sh, 'tipColor', onChange, 'tip color');
-  num(shading, sh, 'gradientStart', { min: 0, max: 1, label: 'gradient start' }, onChange);
-  num(shading, sh, 'gradientEnd', { min: 0, max: 1, label: 'gradient end' }, onChange);
-  num(shading, sh, 'textureInfluence', { min: 0, max: 1, label: 'texture color' }, onChange);
-  num(shading, sh, 'hueJitter', { min: 0, max: 0.3, label: 'hue jitter' }, onChange);
-  num(shading, sh, 'valueJitter', { min: 0, max: 0.6, label: 'value jitter' }, onChange);
-  shading.addBlade({ view: 'separator' });
-  num(shading, sh, 'specular', { min: 0, max: 2 }, onChange);
-  num(shading, sh, 'roughness', { min: 0.05, max: 1 }, onChange);
-  num(shading, sh, 'shift', { min: -0.2, max: 0.2, label: 'cuticle shift' }, onChange);
-  num(shading, sh, 'backlit', { min: 0, max: 2, label: 'transmission' }, onChange);
-  num(shading, sh, 'scatter', { min: 0, max: 2 }, onChange);
-  shading.addBlade({ view: 'separator' });
-  num(shading, sh, 'opacity', { min: 0, max: 1 }, onChange);
-  num(shading, sh, 'tipFade', { min: 0, max: 1, label: 'tip fade' }, onChange);
-  shading.addBlade({ view: 'separator' });
-  num(shading, sh, 'selfShadowDensity', { min: 0, max: 5000, label: 'self-shadow' }, onChange);
-  num(shading, sh, 'aoRoot', { min: 0, max: 1, label: 'root AO' }, onChange);
-  num(shading, sh, 'aoRange', { min: 0.01, max: 1, label: 'AO range' }, onChange);
-  num(shading, sh, 'ambient', { min: 0, max: 3 }, onChange);
+type Section = 'physics' | 'style' | 'shading';
+type HairControl =
+  | { kind: 'num'; section: Section; spec: NumberSpec & { label: string; hint: string } }
+  | { kind: 'toggle' | 'color'; section: Section; label: string; hint: string }
+  | { kind: 'gravity'; spec: NumberSpec & { label: string; hint: string } };
+
+const n = (section: Section, spec: NumberSpec & { label: string; hint: string }): HairControl => ({
+  kind: 'num',
+  section,
+  spec,
+});
+
+/** Every hair parameter's control, keyed by parameter name. Basics and the folders share these. */
+const HAIR_CONTROLS = {
+  // physics: shape
+  globalStiffness: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'style hold',
+    hint: 'Pull towards the groomed shape. Higher keeps the style; lower lets the hair hang and swing.',
+  }),
+  globalTip: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'hold at tip',
+    hint: "Style hold at the tip, as a fraction of the root's.",
+  }),
+  globalCurve: n('physics', {
+    min: 0.1,
+    max: 4,
+    label: 'hold falloff',
+    hint: 'How the hold fades from root to tip: below 1 it drops quickly near the root, above 1 it stays strong and drops near the end.',
+  }),
+  globalRange: n('physics', {
+    min: 0.05,
+    max: 1,
+    label: 'hold range',
+    hint: 'Fraction of the strand (from the root) the hold fades over; beyond it only the tip hold is left.',
+  }),
+  localStiffness: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'bend stiffness',
+    hint: 'Resistance to bending: keeps curls and bends in shape.',
+  }),
+  localTip: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'bend at tip',
+    hint: "Bend stiffness at the tip, as a fraction of the root's.",
+  }),
+  // physics: motion
+  damping: n('physics', {
+    min: 0,
+    max: 10,
+    label: 'damping',
+    hint: 'How quickly motion dies down (per second). Higher settles faster and bounces less.',
+  }),
+  drag: n('physics', {
+    min: 0,
+    max: 20,
+    label: 'air drag',
+    hint: 'Air resistance (per second): slows strands moving through the air and sets how strongly wind pushes them.',
+  }),
+  followRoot: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'move with body',
+    hint: "Fraction of the body's motion the whole strand copies rigidly. 0 = full inertia (hair lags), 1 = moves like a helmet.",
+  }),
+  dftlDamping: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'stretch damping',
+    hint: 'Removes the jitter that keeping strands at their length adds. About 0.9 looks natural; lower is livelier but jittery.',
+  }),
+  gravity: {
+    kind: 'gravity',
+    spec: { min: 0, max: 30, label: 'gravity (m/s²)', hint: 'Strength of gravity (Earth = 9.81).' },
+  },
+  // physics: collision
+  collisionMargin: n('physics', {
+    min: 0,
+    max: 30,
+    scale: 1000,
+    label: 'margin (mm)',
+    hint: 'Gap kept between the hair and the body.',
+  }),
+  collisionFriction: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'friction',
+    hint: 'How much hair sticks instead of sliding when it touches the body.',
+  }),
+  collide: {
+    kind: 'toggle',
+    section: 'style',
+    label: 'strand collision',
+    hint: 'Also push the drawn strands (not just the simulated guides) out of the body. Fixes hair cutting through ears and shoulders; costs some speed.',
+  },
+  rootColliderRange: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'root collider skip',
+    hint: 'Fraction of the strand, from the root, that ignores colliders the root is inside (so hair can grow out of them).',
+  }),
+  sdfRootRange: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'root body skip',
+    hint: 'Fraction of the strand, from the root, that ignores the body shape, so fur can pass under skin folds (armpits).',
+  }),
+  rootPlane: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'keep off skin',
+    hint: 'Keeps hair at least this fraction of its groomed height above the skin at its root, so fur does not lie flat.',
+  }),
+  rootPlaneRange: n('physics', {
+    min: 0,
+    max: 1,
+    label: 'keep off skin range',
+    hint: 'Fraction of the strand, from the root, that "keep off skin" applies to.',
+  }),
+  // physics: performance
+  substeps: n('physics', {
+    min: 1,
+    max: 12,
+    step: 1,
+    label: 'substeps',
+    hint: 'Solver steps per 1/60 s. More = stiffer, steadier hair but slower.',
+  }),
+  maxVelocity: n('physics', {
+    min: 0.5,
+    max: 50,
+    label: 'max speed (m/s)',
+    hint: 'Speed limit for strand points; keeps very fast motion stable.',
+  }),
+  // style
+  clump: n('style', { min: 0, max: 1, label: 'clump', hint: 'How much strands gather into clumps.' }),
+  clumpShape: n('style', {
+    min: 0.1,
+    max: 5,
+    label: 'clump shape',
+    hint: 'Where along the strand clumps pinch together: higher = only near the tips.',
+  }),
+  curlRadius: n('style', {
+    min: 0,
+    max: 30,
+    scale: 1000,
+    label: 'curl size (mm)',
+    hint: 'Radius of the curls (0 = straight).',
+  }),
+  curlTurns: n('style', {
+    min: 0,
+    max: 40,
+    label: 'curl turns',
+    hint: 'Number of curl turns along a strand.',
+  }),
+  curlRamp: n('style', {
+    min: 0.01,
+    max: 1,
+    label: 'curl fade-in',
+    hint: 'Fraction of the strand over which the curls grow in from the root.',
+  }),
+  frizz: n('style', {
+    min: 0,
+    max: 20,
+    scale: 1000,
+    label: 'frizz (mm)',
+    hint: 'Random flyaway offset of each strand.',
+  }),
+  frizzFrequency: n('style', {
+    min: 0.5,
+    max: 30,
+    label: 'frizz detail',
+    hint: 'How fine the frizz is: more waves along each strand.',
+  }),
+  rootWidth: n('style', {
+    min: 0.02,
+    max: 3,
+    scale: 1000,
+    digits: 3,
+    label: 'root width (mm)',
+    hint: 'Strand thickness at the root.',
+  }),
+  tipWidth: n('style', {
+    min: 0,
+    max: 3,
+    scale: 1000,
+    digits: 3,
+    label: 'tip width (mm)',
+    hint: 'Strand thickness at the tip.',
+  }),
+  taper: n('style', {
+    min: 0.1,
+    max: 5,
+    label: 'taper',
+    hint: 'How the width narrows towards the tip: higher stays thick for longer, then thins quickly.',
+  }),
+  guideBlend: n('style', {
+    min: 0,
+    max: 1,
+    label: 'guide smoothing',
+    hint: 'Drawn strands are interpolated from simulated guides: 0 = copy the nearest guide (clumpy), 1 = smooth blend of three.',
+  }),
+  density: n('style', { min: 0.01, max: 1, label: 'density', hint: 'Fraction of the strands drawn.' }),
+  lodEnabled: {
+    kind: 'toggle',
+    section: 'style',
+    label: 'auto LOD',
+    hint: 'Automatically draw fewer, wider strands when the hair is small on screen.',
+  },
+  lodStrandsPerPixel: n('style', {
+    min: 0.5,
+    max: 40,
+    label: 'LOD threshold',
+    hint: 'On-screen strand density (strands per pixel) at which auto LOD starts thinning.',
+  }),
+  lodWidthExponent: n('style', {
+    min: 0,
+    max: 1,
+    label: 'LOD thicken',
+    hint: 'How much the remaining strands widen to make up for the removed ones (1 = keep the same coverage).',
+  }),
+  minPixelWidth: n('style', {
+    min: 0.25,
+    max: 3,
+    label: 'min width (px)',
+    hint: 'Strands are drawn at least this wide on screen (avoids flicker); thinner hair is made transparent instead.',
+  }),
+  // shading
+  rootColor: { kind: 'color', section: 'shading', label: 'root color', hint: 'Hair color at the root.' },
+  tipColor: { kind: 'color', section: 'shading', label: 'tip color', hint: 'Hair color at the tip.' },
+  gradientStart: n('shading', {
+    min: 0,
+    max: 1,
+    label: 'color blend start',
+    hint: 'Where along the strand (0 = root, 1 = tip) the root color starts blending into the tip color.',
+  }),
+  gradientEnd: n('shading', {
+    min: 0,
+    max: 1,
+    label: 'color blend end',
+    hint: 'Where along the strand the blend reaches the tip color.',
+  }),
+  textureInfluence: n('shading', {
+    min: 0,
+    max: 1,
+    label: 'texture tint',
+    hint: "How much the model's texture colors the hair.",
+  }),
+  hueJitter: n('shading', { min: 0, max: 0.3, label: 'hue variation', hint: 'Random hue shift per strand.' }),
+  valueJitter: n('shading', {
+    min: 0,
+    max: 0.6,
+    label: 'brightness variation',
+    hint: 'Random brightness change per strand.',
+  }),
+  specular: n('shading', { min: 0, max: 2, label: 'shine', hint: 'Strength of the highlights.' }),
+  roughness: n('shading', {
+    min: 0.05,
+    max: 1,
+    label: 'roughness',
+    hint: 'Highlight blur: low = sharp glossy highlights, high = soft ones.',
+  }),
+  shift: n('shading', {
+    min: -0.2,
+    max: 0.2,
+    label: 'highlight shift',
+    hint: 'Moves the highlights along the strand (the tilt of the hair cuticle).',
+  }),
+  backlit: n('shading', {
+    min: 0,
+    max: 2,
+    label: 'backlight glow',
+    hint: 'Light shining through the hair when it is lit from behind.',
+  }),
+  scatter: n('shading', {
+    min: 0,
+    max: 2,
+    label: 'scatter',
+    hint: 'Light bouncing around inside the hair volume (a softer, brighter look).',
+  }),
+  opacity: n('shading', { min: 0, max: 1, label: 'opacity', hint: 'Overall strand opacity.' }),
+  tipFade: n('shading', {
+    min: 0,
+    max: 1,
+    label: 'tip fade',
+    hint: 'Fraction of the strand at the tip that fades out.',
+  }),
+  selfShadowDensity: n('shading', {
+    min: 0,
+    max: 5000,
+    label: 'self-shadow',
+    hint: 'How strongly the hair shadows itself: deep layers get darker.',
+  }),
+  aoRoot: n('shading', {
+    min: 0,
+    max: 1,
+    label: 'root darkening',
+    hint: 'Darkens the hair near the roots, where less light gets in.',
+  }),
+  aoRange: n('shading', {
+    min: 0.01,
+    max: 1,
+    label: 'darkening length',
+    hint: 'Fraction of the strand the root darkening covers.',
+  }),
+  ambient: n('shading', {
+    min: 0,
+    max: 3,
+    label: 'ambient',
+    hint: 'Brightness of the environment light on the hair.',
+  }),
+} satisfies Record<string, HairControl>;
+
+type HairControlId = keyof typeof HAIR_CONTROLS;
+type Layout = (HairControlId | '---' | `# ${string}`)[];
+
+const BASICS: Layout = [
+  'globalStiffness',
+  'localStiffness',
+  'damping',
+  'gravity',
+  'curlRadius',
+  'frizz',
+  'clump',
+  'rootWidth',
+  'specular',
+];
+
+const FOLDERS: [string, Layout][] = [
+  [
+    'Motion',
+    [
+      'globalStiffness',
+      'globalTip',
+      'globalCurve',
+      'globalRange',
+      '---',
+      'localStiffness',
+      'localTip',
+      '---',
+      'damping',
+      'drag',
+      'followRoot',
+      'dftlDamping',
+      'gravity',
+      '# Collision',
+      'collisionMargin',
+      'collisionFriction',
+      'collide',
+      'rootColliderRange',
+      'sdfRootRange',
+      'rootPlane',
+      'rootPlaneRange',
+    ],
+  ],
+  [
+    'Strand shape',
+    [
+      'clump',
+      'clumpShape',
+      '---',
+      'curlRadius',
+      'curlTurns',
+      'curlRamp',
+      'frizz',
+      'frizzFrequency',
+      '---',
+      'rootWidth',
+      'tipWidth',
+      'taper',
+    ],
+  ],
+  [
+    'Color & shine',
+    [
+      'rootColor',
+      'tipColor',
+      'gradientStart',
+      'gradientEnd',
+      'textureInfluence',
+      'hueJitter',
+      'valueJitter',
+      '---',
+      'specular',
+      'roughness',
+      'shift',
+      'backlit',
+      'scatter',
+      '---',
+      'opacity',
+      'tipFade',
+      '---',
+      'selfShadowDensity',
+      'aoRoot',
+      'aoRange',
+      'ambient',
+    ],
+  ],
+  [
+    'Performance',
+    [
+      'substeps',
+      'maxVelocity',
+      'guideBlend',
+      'density',
+      'lodEnabled',
+      'lodStrandsPerPixel',
+      'lodWidthExponent',
+      'minPixelWidth',
+    ],
+  ],
+];
+
+/** Gravity as one strength slider; the direction is kept (straight down if it was zero). */
+function gravityStrength(params: HairParamsData) {
+  const g = params.physics.gravity;
+  return {
+    get v() {
+      return Math.hypot(g.x, g.y, g.z);
+    },
+    set v(m: number) {
+      const len = Math.hypot(g.x, g.y, g.z);
+      if (len < 1e-6) Object.assign(g, { x: 0, y: -m, z: 0 });
+      else Object.assign(g, { x: (g.x * m) / len, y: (g.y * m) / len, z: (g.z * m) / len });
+    },
+  };
+}
+
+/**
+ * The controls of one hair group. A parameter can appear twice (Basics and its folder): the copies stay in sync.
+ */
+class HairControls {
+  private readonly bindings = new Map<HairControlId, Binding[]>();
+  private readonly defaults: HairParamsData;
+  private syncing = false;
+
+  private readonly params: HairParamsData;
+  private readonly onChange: () => void;
+
+  constructor(params: HairParamsData, onChange: () => void) {
+    this.params = params;
+    this.onChange = onChange;
+    this.defaults = structuredClone(params);
+  }
+
+  build(c: Container, layout: Layout): void {
+    for (const item of layout) {
+      if (item === '---') c.addBlade({ view: 'separator' });
+      else if (item.startsWith('# ')) heading(c, item.slice(2));
+      else this.add(c, item as HairControlId);
+    }
+  }
+
+  private add(c: Container, id: HairControlId): void {
+    const ctl: HairControl = HAIR_CONTROLS[id];
+    const changed = () => this.changed(id);
+    let b: Binding;
+    if (ctl.kind === 'gravity') {
+      b = num(c, gravityStrength(this.params), 'v', ctl.spec, changed);
+    } else {
+      const obj = this.params[ctl.section] as unknown as Record<string, unknown>;
+      if (ctl.kind === 'num') b = num(c, obj, id, ctl.spec, changed);
+      else if (ctl.kind === 'toggle') b = toggle(c, obj, id, changed, ctl.label, ctl.hint);
+      else b = colorBinding(c, obj, id, changed, ctl.label, ctl.hint);
+    }
+    const list = this.bindings.get(id) ?? [];
+    list.push(b);
+    this.bindings.set(id, list);
+  }
+
+  private changed(id: HairControlId): void {
+    if (this.syncing) return;
+    this.refresh(this.bindings.get(id) ?? []);
+    this.onChange();
+  }
+
+  private refresh(bindings: Iterable<Binding>): void {
+    this.syncing = true;
+    for (const b of bindings) b.refresh();
+    this.syncing = false;
+  }
+
+  /** Back to the values the group started with. */
+  reset(): void {
+    deepMerge(
+      this.params as unknown as Record<string, unknown>,
+      structuredClone(this.defaults) as unknown as Record<string, unknown>,
+    );
+    this.refresh([...this.bindings.values()].flat());
+    this.onChange();
+  }
+}
+
+const controlsByParams = new WeakMap<HairParamsData, HairControls>();
+
+function controlsFor(params: HairParamsData, onChange: () => void): HairControls {
+  let ctl = controlsByParams.get(params);
+  if (!ctl) {
+    ctl = new HairControls(params, onChange);
+    controlsByParams.set(params, ctl);
+  }
+  return ctl;
+}
+
+/** The most useful sliders of a hair group, shown right in its folder (they also appear in the folders below). */
+export function addHairBasics(c: Container, params: HairParamsData, onChange: () => void): void {
+  heading(c, 'Basics');
+  controlsFor(params, onChange).build(c, BASICS);
+}
+
+/** Motion / Strand shape / Color & shine / Performance folders for a hair group, and a reset button. */
+export function addHairFolders(c: Container, params: HairParamsData, onChange: () => void): void {
+  const ctl = controlsFor(params, onChange);
+  for (const [title, layout] of FOLDERS) ctl.build(c.addFolder({ title, expanded: false }), layout);
+  c.addButton({ title: 'Reset these hair settings' }).on('click', () => ctl.reset());
 }

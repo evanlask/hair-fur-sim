@@ -119,11 +119,14 @@ export function createMulletParams(substeps: number): MulletParams {
       shading,
     }),
     party: mergeHairParams({
+      // A strong style hold over the top of the party (late falloff, limited range) keeps it full under the
+      // business crown, so the two blend; below the range the lengths hang free and swing.
       physics: {
         substeps,
-        globalStiffness: 0.035,
+        globalStiffness: 0.3,
         globalTip: 0.0,
-        globalCurve: 0.6,
+        globalCurve: 3,
+        globalRange: 0.45,
         localStiffness: 0.45,
         localTip: 0.3,
         damping: 1.0,

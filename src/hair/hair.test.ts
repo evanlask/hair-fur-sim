@@ -142,6 +142,16 @@ describe('params', () => {
     expect(out[7 * 4 + 2]).toBeCloseTo(1);
   });
 
+  it('reaches the tip stiffness at the end of the hold range', () => {
+    const p = { ...defaultPhysics(), globalTip: 0, globalCurve: 1, globalRange: 0.5 };
+    const out = new Float32Array(9 * 4);
+    buildParticleProfile(p, 9, out);
+    expect(out[0]).toBeCloseTo(1);
+    expect(out[2 * 4]).toBeCloseTo(0.5); // s = 0.25: halfway through the range
+    expect(out[4 * 4]).toBeCloseTo(0); // s = 0.5: end of the range
+    expect(out[8 * 4]).toBeCloseTo(0);
+  });
+
   it('scales coefficients with the substep length', () => {
     const u = new HairUniforms();
     const params = mergeHairParams({ physics: { substeps: 4, damping: 2 } });

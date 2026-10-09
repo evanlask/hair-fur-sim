@@ -206,6 +206,18 @@ export function addWindFolder(parent: Container): FolderApi {
     { min: 0, max: 2, label: 'gusts', hint: 'How strongly the wind speed pulses over time.' },
     sync,
   );
+  num(
+    wind,
+    w,
+    'gustPeriod',
+    {
+      min: 1,
+      max: 15,
+      label: 'gust period (s)',
+      hint: 'Time between gusts. Gust fronts roll downwind at the wind speed, so longer periods mean wider waves across grass.',
+    },
+    sync,
+  );
   return wind;
 }
 
@@ -437,6 +449,24 @@ const HAIR_CONTROLS = {
     label: 'LOD thicken',
     hint: 'How much the remaining strands widen to make up for the removed ones (1 = keep the same coverage).',
   }),
+  lodSegmentPx: n('style', {
+    min: 0,
+    max: 40,
+    label: 'LOD segment (px)',
+    hint: 'Faster: when strands are small on screen, draw every 2nd–4th point as long as each drawn segment stays at most this many pixels long. 0 = always draw every point.',
+  }),
+  lodSubpixelDensity: n('style', {
+    min: 0.2,
+    max: 1,
+    label: 'sub-pixel density',
+    hint: 'Faster: while strands are thinner than a pixel on screen, draw at least this fraction of them, wider to keep the same coverage. Up close every strand is drawn. 1 = off.',
+  }),
+  backCull: n('style', {
+    min: 0,
+    max: 1,
+    label: 'skip far side',
+    hint: 'Faster: skip strands on the side of the body facing away from the camera. Higher keeps more strands near the silhouette (raise it if fur pops at the edges); 0 = off.',
+  }),
   minPixelWidth: n('style', {
     min: 0.25,
     max: 3,
@@ -624,6 +654,9 @@ const FOLDERS: [string, Layout][] = [
       'lodEnabled',
       'lodStrandsPerPixel',
       'lodWidthExponent',
+      'lodSegmentPx',
+      'lodSubpixelDensity',
+      'backCull',
       'minPixelWidth',
     ],
   ],

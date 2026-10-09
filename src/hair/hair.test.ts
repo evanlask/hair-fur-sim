@@ -8,7 +8,15 @@ import { SpatialHash } from './groom/SpatialHash';
 import { createBallStyle, defaultBallStyle } from './groom/styles/ballStyle';
 import { SurfaceSampler, createSurfacePoint } from './groom/SurfaceSampler';
 import type { GrowthMesh } from './groom/types';
-import { buildParticleProfile, defaultPhysics, HairUniforms, mergeHairParams, DT_REF } from './params';
+import {
+  buildParticleProfile,
+  defaultPhysics,
+  defaultWind,
+  hairWind,
+  HairUniforms,
+  mergeHairParams,
+  DT_REF,
+} from './params';
 import { equirectToIrradianceSH, shBasis } from './render/envSH';
 
 function sphereGrowth(radius = 0.2): GrowthMesh {
@@ -132,6 +140,18 @@ describe('groomer', () => {
 });
 
 describe('params', () => {
+  it('derives gust fronts that travel downwind at the wind speed', () => {
+    Object.assign(hairWind.params, { enabled: true, strength: 2, gustPeriod: 5 });
+    hairWind.sync();
+    const omega = hairWind.gustOmega.value as number;
+    const k = hairWind.gustK.value as number;
+    expect(omega).toBeCloseTo((2 * Math.PI) / 5);
+    // Phase speed ω / k equals the wind speed.
+    expect(omega / k).toBeCloseTo(2);
+    Object.assign(hairWind.params, defaultWind());
+    hairWind.sync();
+  });
+
   it('builds a root→tip stiffness profile', () => {
     const p = defaultPhysics();
     const out = new Float32Array(8 * 4);

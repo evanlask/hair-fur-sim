@@ -24,6 +24,7 @@ const {
   length,
   max,
   mix,
+  mx_noise_float,
   mx_noise_vec3,
   pow,
   select,
@@ -117,16 +118,23 @@ export function buildSolveKernel(ctx: GroupContext): N {
 
   const windAt = (x: N, seed: N): N => {
     const t = U.time;
-    const gust = float(1).add(
-      U.windGust.mul(
-        sin(t.mul(0.9).add(seed.mul(6.283)))
-          .mul(0.6)
-          .add(sin(t.mul(2.7).add(seed.mul(3.1))).mul(0.4)),
-      ),
-    );
-    const strength = length(U.wind);
-    const noise = mx_noise_vec3(x.mul(U.windFrequency).add(vec3(t.mul(0.7), t.mul(0.25), t.mul(-0.45))));
-    return U.wind.mul(gust).add(noise.mul(strength.mul(U.windTurbulence)));
+    const speed = length(U.wind);
+    const dir = U.wind.div(max(speed, 1e-4));
+    // Gust fronts roll downwind at the wind speed, warped so they aren't straight lines. Any one spot still
+    // pulses once per gust period; a character is far shorter than a wavelength, so it feels them uniformly.
+    const warp = mx_noise_float(vec3(x.x, 0, x.z).mul(0.25)).mul(1.5);
+    const ph = dot(x, dir).add(warp).mul(U.windGustK).sub(t.mul(U.windGustOmega));
+    const front = sin(ph)
+      .mul(0.6)
+      .add(sin(ph.mul(2.3).add(seed.mul(0.8)).add(1.7)).mul(0.4));
+    const gust = max(float(0.05), float(1).add(U.windGust.mul(front)));
+    // Turbulence rides along with the air.
+    const adv = x
+      .sub(U.wind.mul(t))
+      .mul(U.windFrequency)
+      .add(vec3(0, t.mul(0.3), 0));
+    const noise = mx_noise_vec3(adv).mul(gust.mul(0.5).add(0.5));
+    return U.wind.mul(gust).add(noise.mul(speed.mul(U.windTurbulence)));
   };
 
   return (

@@ -140,7 +140,9 @@ async function main(): Promise<void> {
   app.onUpdate = (info) => {
     stats.beginCpu();
     gui.fps.begin();
-    example.update(info);
+    // Pausing the simulation also freezes the examples' animation (one 1/60 s step for "Step one frame"), so
+    // bodies don't move away from their paused hair.
+    example.update(hair.paused ? { ...info, dt: hair.stepOnce ? 1 / 60 : 0 } : info);
     hair.update(info.dt, info.time);
   };
   app.onAfterRender = (info) => {
@@ -161,7 +163,42 @@ async function main(): Promise<void> {
     example,
     quality,
     QUALITY,
+    profile: (frames?: number) => profileStages(app, hair, frames),
   };
+}
+
+/**
+ * Times frames with each hair stage skipped in turn (`await __fursim.profile()` in DevTools). Each stage is timed
+ * right after a fresh baseline and the median of `reps` differences is its cost (GPU clocks drift, so one baseline
+ * for all is misleading). The skipped stage's output goes stale, so frames look wrong while it runs.
+ */
+async function profileStages(
+  app: App,
+  hair: HairSystem,
+  frames = 40,
+  reps = 3,
+): Promise<Record<string, number>> {
+  const stages = ['solve', 'interpolate', 'shadows', 'shade', 'draw'] as const;
+  const median = (v: number[]) => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)];
+  const baselines: number[] = [];
+  const costs: Record<string, number[]> = {};
+  for (let r = 0; r < reps; r++) {
+    for (const stage of stages) {
+      const base = (await app.benchmark(frames)).medianMs;
+      hair.debugSkip[stage] = true;
+      try {
+        (costs[stage] ??= []).push(base - (await app.benchmark(frames)).medianMs);
+      } finally {
+        hair.debugSkip[stage] = false;
+      }
+      baselines.push(base);
+    }
+  }
+  const out: Record<string, number> = { baseline: median(baselines) };
+  for (const stage of stages) out[stage] = median(costs[stage]);
+  for (const k in out) out[k] = Math.round(out[k] * 100) / 100;
+  console.table(out);
+  return out;
 }
 
 /** Rendering settings: quality preset, resolution, antialiasing and tone mapping. */
@@ -198,7 +235,7 @@ function addRenderingFolder(
       max: 2,
       step: 0.05,
       label: 'render scale',
-      hint: 'Resolution multiplier: lower is faster, higher is sharper.',
+      hint: "Pixels per screen point, up to the display's own density (no supersampling): lower is faster, higher is sharper on high-DPI screens.",
     },
     () => app.setRenderScale(q.renderScale),
   );
@@ -273,7 +310,7 @@ function addLightingFolder(gui: Gui, app: App, lights: LightRig, hair: HairSyste
       Object.assign(lp, preset.light);
       app.setBackdrop(preset.backdrop.top, preset.backdrop.bottom, preset.backdrop.floor);
       lights.apply();
-      await app.loadEnvironment(preset.env, lp.envIntensity);
+      if (!(await app.loadEnvironment(preset.env, lp.envIntensity))) return;
       hair.lighting.setEnvironment(app.scene.environment);
       gui.pane.refresh();
     });
@@ -342,12 +379,13 @@ function addLightingFolder(gui: Gui, app: App, lights: LightRig, hair: HairSyste
 /** Save / load / export / import every GUI value (Tweakpane state) per example. */
 function addPresetControls(gui: Gui, exampleKey: string): void {
   // Tweakpane restores state by position: bump the version whenever the panels' layout changes.
-  const storageKey = `fursim:settings:v9:${exampleKey}`;
+  const storageKey = `fursim:settings:v10:${exampleKey}`;
   const f = gui.folder('Save / load', false);
-  const apply = (state: unknown) => {
+  /** Applies a saved preset given as JSON text; bad JSON or a mismatched layout only warns. */
+  const apply = (json: string) => {
     try {
-      if (!gui.pane.importState(state as Parameters<typeof gui.pane.importState>[0]))
-        console.warn('[fursim] preset only partly matches this example');
+      const state = JSON.parse(json) as Parameters<typeof gui.pane.importState>[0];
+      if (!gui.pane.importState(state)) console.warn('[fursim] preset only partly matches this example');
     } catch (err) {
       console.warn('[fursim] preset does not match this example', err);
     }
@@ -357,7 +395,7 @@ function addPresetControls(gui: Gui, exampleKey: string): void {
   );
   f.addButton({ title: 'Load (browser)' }).on('click', () => {
     const s = localStorage.getItem(storageKey);
-    if (s) apply(JSON.parse(s));
+    if (s) apply(s);
   });
   f.addButton({ title: 'Export JSON' }).on('click', () => {
     const blob = new Blob([JSON.stringify(gui.pane.exportState(), null, 2)], { type: 'application/json' });
@@ -365,7 +403,8 @@ function addPresetControls(gui: Gui, exampleKey: string): void {
     a.href = URL.createObjectURL(blob);
     a.download = `hair-fur-simulation-${exampleKey}.json`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Revoking right after click() can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
   });
   f.addButton({ title: 'Import JSON' }).on('click', () => {
     const input = document.createElement('input');
@@ -373,7 +412,12 @@ function addPresetControls(gui: Gui, exampleKey: string): void {
     input.accept = 'application/json';
     input.onchange = async () => {
       const file = input.files?.[0];
-      if (file) apply(JSON.parse(await file.text()));
+      if (!file) return;
+      try {
+        apply(await file.text());
+      } catch (err) {
+        console.warn('[fursim] could not read the preset file', err);
+      }
     };
     input.click();
   });

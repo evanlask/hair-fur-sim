@@ -1,6 +1,6 @@
 import { tsl } from './tsl';
 
-const { Fn, cross, dot, float, length, max, select, vec3 } = tsl;
+const { Fn, cross, dot, float, floor, length, max, mix, select, uint, vec3 } = tsl;
 
 // Loose node type for kernel code (see tsl.ts).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,4 +93,42 @@ export function rootNormal(P0: N, P1: N, P2: N, nBlend: N): N {
   const nI = safeNormalize(nBlend, vec3(0, 1, 0));
   const nF = safeNormalize(cross(P1.sub(P0), P2.sub(P0)), nI);
   return select(dot(nI, nF).lessThan(0.3), nF, nI);
+}
+
+/** 32-bit PCG hash of a uint (the integer core of three's `hash`), for taking several values from one hash. */
+export function pcgHash(seed: N): N {
+  const state = seed.mul(uint(747796405)).add(uint(2891336453));
+  const word = state
+    .shiftRight(state.shiftRight(uint(28)).add(uint(4)))
+    .bitXor(state)
+    .mul(uint(277803737));
+  return word.shiftRight(uint(22)).bitXor(word);
+}
+
+/** Three random gradients in [−1, 1] from one lattice hash (10 bits each). */
+function lattice3(i: N, key: N): N {
+  const h = pcgHash(i.add(key));
+  return vec3(
+    float(h.bitAnd(uint(1023))),
+    float(h.shiftRight(uint(10)).bitAnd(uint(1023))),
+    float(h.shiftRight(uint(20)).bitAnd(uint(1023))),
+  )
+    .div(511.5)
+    .sub(1);
+}
+
+/**
+ * Smooth vec3 gradient noise of one variable x ≥ 0, roughly in [−1, 1]. `key` (uint) picks an independent
+ * pattern. Much cheaper than 3D Perlin for noise that only varies along a strand: two hashes for all three axes.
+ */
+export function gradientNoise1D3(x: N, key: N): N {
+  const i = floor(x);
+  const f = x.sub(i);
+  const iu = uint(i);
+  const w = f
+    .mul(f)
+    .mul(f)
+    .mul(f.mul(f.mul(6).sub(15)).add(10));
+  // Scaled by 2: 1D gradient noise peaks at ±0.5.
+  return mix(lattice3(iu, key).mul(f), lattice3(iu.add(uint(1)), key).mul(f.sub(1)), w).mul(2);
 }

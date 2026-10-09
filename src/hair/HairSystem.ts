@@ -31,6 +31,34 @@ const tmpSphere = new THREE.Sphere();
 const tmpVec = new THREE.Vector3();
 const white = new THREE.Color(1, 1, 1);
 
+/** Largest draw stride tried by the draw LOD. */
+const MAX_DRAW_STRIDE = 4;
+/** A coarser stride is only taken once its segments are this much shorter than the limit (no flicker at the edge). */
+const STRIDE_HYSTERESIS = 0.85;
+
+/**
+ * Draw LOD stride for a group at `pxPerMeter` on screen: the largest stride whose segments (of the longest
+ * strand) stay within `lodSegmentPx`, keeping at least 3 segments and, for a visible curl, 8 points per turn.
+ */
+function drawStrideFor(g: HairGroup, pxPerMeter: number): number {
+  const st = g.params.style;
+  const limit = st.lodSegmentPx;
+  if (!(limit > 0)) return 1;
+  const segments = g.ctx.R - 1;
+  const segmentPx = (g.maxLength / segments) * pxPerMeter;
+  const minPointsPerTurn = st.curlRadius * pxPerMeter > 0.5 ? 8 : 0;
+  let stride = 1;
+  for (let s = 2; s <= MAX_DRAW_STRIDE; s++) {
+    // Stay at the current stride or finer at the edge of the limit; only go coarser with some margin.
+    const margin = s > g.drawStride ? STRIDE_HYSTERESIS : 1;
+    if (segmentPx * s > limit * margin) break;
+    if (segments / s < 3) break;
+    if (minPointsPerTurn && segments / s / Math.max(st.curlTurns, 1e-3) < minPointsPerTurn) break;
+    stride = s;
+  }
+  return stride;
+}
+
 /**
  * Orchestrates the per-frame GPU work for every hair instance:
  * deform → roots → (reset) → solve (substeps in-kernel) → (TAA: save previous) → interpolate →
@@ -47,6 +75,8 @@ export class HairSystem {
   shadowResolution = 2048;
   /** Multiplier on self-shadow density for hair shadows cast onto bodies / floor. */
   bodyShadowScale = 0.35;
+  /** Profiling only (`__fursim.profile()`): stages to skip, so their cost shows up as a frame-time difference. */
+  readonly debugSkip = { solve: false, interpolate: false, shadows: false, shade: false, draw: false };
   private readonly usedSlots = new Set<number>();
   private readonly slotOf = new Map<HairInstance, number>();
   private readonly opaqueDepthMaterial = new THREE.MeshBasicNodeMaterial({ colorWrite: false });
@@ -71,17 +101,36 @@ export class HairSystem {
     this.float32Blendable = renderer.hasFeature('float32-blendable');
   }
 
+  /**
+   * Destroys the GPU buffers behind storage nodes nobody uses any more (regroomed or removed hair). three.js
+   * only frees storage buffers through geometry disposal, so this goes through the renderer's attribute
+   * manager (internal API; it ignores buffers that were never uploaded or are already freed).
+   */
+  private readonly releaseBuffers = (buffers: N[]): void => {
+    const attributes = (this.renderer as unknown as { _attributes?: { delete(a: unknown): unknown } | null })
+      ._attributes;
+    if (!attributes) return;
+    for (const b of buffers) {
+      const attr = (b as { value?: unknown }).value;
+      if (attr) attributes.delete(attr);
+    }
+  };
+
   /** Creates a hair instance wired to the shared lighting and a dedicated shadow map. */
   createInstance(opts: HairInstanceOptions): HairInstance {
     let slot = 0;
     while (this.usedSlots.has(slot) && slot < MAX_INSTANCES) slot++;
     if (slot >= MAX_INSTANCES) throw new Error(`At most ${MAX_INSTANCES} hair instances are supported`);
     this.usedSlots.add(slot);
-    const shadowMap = new HairShadowMap(this.shadowResolution, this.float32Blendable);
+    const shadowMap = new HairShadowMap(
+      opts.shadowResolution ?? this.shadowResolution,
+      this.float32Blendable,
+    );
     const inst = new HairInstance(opts, {
       lighting: this.lighting,
       shadowMap,
       shadowLayer: HAIR_SHADOW_LAYER + slot,
+      release: this.releaseBuffers,
     });
     this.slotOf.set(inst, slot);
     this.instances.push(inst);
@@ -148,10 +197,14 @@ export class HairSystem {
     }
 
     const r = this.renderer;
+    const skip = this.debugSkip;
+    for (const inst of this.instances)
+      for (const g of inst.groups) g.mesh.visible = inst.showStrands && !skip.draw;
     void r.compute(deform);
-    if (simulate || resets.length) void r.compute(roots);
+    // Roots run even while paused, so the root frames never go stale and unpausing doesn't jump.
+    void r.compute(roots);
     if (resets.length) void r.compute(resets);
-    if (simulate) void r.compute(solves);
+    if (simulate && !skip.solve) void r.compute(solves);
     if (hairRenderSettings.coverage === 'temporal') {
       // TAA: save last frame's strand points (before interpolate overwrites them) for motion vectors,
       // and vary the coverage noise.
@@ -159,9 +212,9 @@ export class HairSystem {
       if (copies.length) void r.compute(copies);
       (hairFrame.value as number) = ((hairFrame.value as number) + 1) % 65536;
     }
-    void r.compute(interps);
-    this.renderShadowMaps();
-    void r.compute(shades);
+    if (!skip.interpolate) void r.compute(interps);
+    if (!skip.shadows) this.renderShadowMaps();
+    if (!skip.shade) void r.compute(shades);
     for (const g of this.groups) g.needsReset = false;
   }
 
@@ -205,12 +258,17 @@ export class HairSystem {
     r.setRenderTarget(savedTarget);
   }
 
-  /** Thins strands when they get denser on screen than `lodStrandsPerPixel`, with width compensation. */
+  /**
+   * Thins strands while they are thinner than a pixel (`lodSubpixelDensity`) or denser on screen than
+   * `lodStrandsPerPixel`, with width compensation, and draws fewer points per strand while the segments stay
+   * shorter on screen than `lodSegmentPx`.
+   */
   private updateLod(inst: HairInstance, g: HairGroup): void {
     const st = g.params.style;
     const total = g.ctx.Ns;
     let fraction = Math.min(1, Math.max(0.01, st.density * this.densityScale));
     let widthScale = 1;
+    let stride = 1;
     if (st.lodEnabled && this.lodEnabledGlobal) {
       inst.getBoundingSphere(tmpSphere);
       const dist = Math.max(
@@ -219,18 +277,29 @@ export class HairSystem {
       );
       const viewportH = this.renderer.domElement.height;
       const pxPerMeter = viewportH / (2 * dist * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2));
+      // Sub-pixel strands are drawn minPixelWidth wide with coverage = width / minPixelWidth, so f of them at 1/f
+      // the width cover the same on average, as long as they stay sub-pixel (f ≥ width / minPixelWidth).
+      const widthPx = st.rootWidth * pxPerMeter;
+      const minPx = Math.max(st.minPixelWidth, 1e-3);
+      if (st.lodSubpixelDensity < 1 && widthPx < minPx) {
+        const f = Math.max(st.lodSubpixelDensity, widthPx / minPx);
+        fraction *= f;
+        widthScale /= f;
+      }
       const radiusPx = tmpSphere.radius * pxPerMeter;
       const areaPx = Math.max(1, Math.PI * radiusPx * radiusPx * 0.5);
       const strandsPerPixel = (total * fraction) / areaPx;
       if (strandsPerPixel > st.lodStrandsPerPixel) {
         const f = st.lodStrandsPerPixel / strandsPerPixel;
         fraction *= f;
-        widthScale = Math.pow(1 / Math.max(f, 1e-3), st.lodWidthExponent);
+        widthScale *= Math.pow(1 / Math.max(f, 1e-3), st.lodWidthExponent);
       }
+      stride = drawStrideFor(g, pxPerMeter);
     }
     const active = Math.max(64, Math.round(total * Math.min(1, fraction)));
     g.uniforms.widthScale.value = Math.min(widthScale, 6);
     g.setActiveStrands(active);
+    g.setDrawStride(stride);
     // Fade out the last 8% of drawn strands so LOD changes don't pop.
     g.uniforms.lodFadeStart.value = active < total ? Math.floor(active * 0.92) : total + 1;
     g.uniforms.lodFadeEnd.value = active < total ? active : total + 2;
@@ -252,7 +321,7 @@ export class HairSystem {
       s.guideParticles += g.ctx.Ng * g.ctx.G;
       s.strandsActive += g.activeStrands;
       s.strandsTotal += g.ctx.Ns;
-      s.vertices += g.activeStrands * g.ctx.R * 2;
+      s.vertices += g.activeStrands * g.drawnPoints() * 2;
     }
     return s;
   }

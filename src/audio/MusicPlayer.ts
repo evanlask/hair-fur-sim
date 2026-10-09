@@ -54,6 +54,8 @@ export class MusicPlayer {
   private readonly loading = new Map<string, Promise<AudioBuffer>>();
   private levelData: Float32Array<ArrayBuffer> | null = null;
   private taps: number[] = [];
+  /** Pending riff re-render from tap tempo (waits until the taps stop). */
+  private tapTimer: ReturnType<typeof setTimeout> | undefined;
   private playToken = 0;
   private starting = false;
 
@@ -180,7 +182,15 @@ export class MusicPlayer {
     this.starting = true;
     // Create and resume the context before the first await, while still inside the user gesture (autoplay policy).
     const ctx = this.ensureContext();
-    await ctx.resume();
+    try {
+      await ctx.resume();
+    } catch (err) {
+      if (token === this.playToken) {
+        this.starting = false;
+        this.status = `could not start audio: ${String(err)}`;
+      }
+      return false;
+    }
     const source = this.source;
     let buffer: AudioBuffer;
     let metalBpm = this.metalBpm;
@@ -314,8 +324,18 @@ export class MusicPlayer {
         .map((x, i) => x - this.taps[i])
         .sort((a, b) => a - b);
       const bpm = 60 / iv[Math.floor(iv.length / 2)];
-      if (this.source === 'metal') void this.setMetalBpm(bpm);
-      else this.setTrackBpm(bpm);
+      if (this.source === 'metal') {
+        // The tempo shows right away, but re-rendering restarts the riff, which would throw off the remaining
+        // taps: wait until tapping stops, and skip it if the riff heard already has this tempo.
+        this.metalBpm = Math.round(clamp(bpm, METAL_BPM_RANGE));
+        clearTimeout(this.tapTimer);
+        this.tapTimer = setTimeout(() => {
+          const playing = (this.playing || this.starting) && this.source === 'metal';
+          if (playing && this.current?.metalBpm !== this.metalBpm) void this.play();
+        }, 1000);
+      } else {
+        this.setTrackBpm(bpm);
+      }
     }
     // Phase alignment only makes sense against the selected track's own audio.
     if (t && this.current?.source === this.source) {

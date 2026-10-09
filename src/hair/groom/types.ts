@@ -61,13 +61,13 @@ export interface GroomGroupSpec {
 
 export interface GroomStyle {
   groups: GroomGroupSpec[];
-  /** Density weight in [0,1] (0 = no hair). */
-  density(p: SurfacePoint): number;
-  /** Group index for a root position. */
+  /** Density weight in [0,1] (0 = no hair) of a group (the one `group(p)` picked, or any for -1). */
+  density(p: SurfacePoint, group: number): number;
+  /** Group index for a root position, or -1 where every group may grow (layered groups; density decides). */
   group(p: SurfacePoint): number;
-  shape(p: SurfacePoint, out: GuideShape): void;
+  shape(p: SurfacePoint, out: GuideShape, group: number): void;
   /** Optional baked per-strand color (linear RGB 0..1). */
-  color?(p: SurfacePoint): [number, number, number] | null;
+  color?(p: SurfacePoint, group: number): [number, number, number] | null;
 }
 
 export interface GuideData {

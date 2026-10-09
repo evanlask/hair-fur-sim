@@ -166,6 +166,41 @@ describe('MusicPlayer', () => {
     vi.restoreAllMocks();
   });
 
+  it('re-renders the riff once tapping stops, not on every tap', async () => {
+    const p = new MusicPlayer();
+    p.source = 'metal';
+    await p.play();
+    const ctx = FakeAudioContext.instance;
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      for (let i = 0; i < 8; i++, now += 500) p.tap(); // 120 BPM
+      expect(p.metalBpm).toBe(120);
+      expect(ctx.audible).toEqual(['metal@132']); // still the old riff while tapping
+      await vi.advanceTimersByTimeAsync(1100);
+    } finally {
+      vi.useRealTimers();
+    }
+    await flush();
+    expect(ctx.audible).toEqual(['metal@120']);
+    vi.restoreAllMocks();
+  });
+
+  it('reports a failed audio start instead of staying pending', async () => {
+    const p = new MusicPlayer();
+    p.source = 'metal';
+    const started = p.play();
+    FakeAudioContext.instance.resume = async () => {
+      throw new Error('device lost');
+    };
+    // The first resume already ran; a second play() hits the failing one.
+    await started;
+    expect(await p.play()).toBe(false);
+    expect(p.pending).toBe(false);
+    expect(p.status).toMatch(/could not start audio/);
+  });
+
   it('keeps only the latest decoded track cached', async () => {
     const p = new MusicPlayer();
     const play = async () => {

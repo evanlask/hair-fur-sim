@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 
 import type { HairUniforms } from '../params';
 import { tsl } from '../sim/tsl';
-import { safeNormalize, type N } from '../sim/tslUtil';
+import { pcgHash, safeNormalize, type N } from '../sim/tslUtil';
 
 const {
   Fn,
@@ -99,8 +99,8 @@ interface RibbonInputs {
   minPixelWidth: N;
   /** Number of strands currently drawn; batch slots beyond it collapse. */
   strandCount: N;
-  /** Geometry point j maps to strand point min(j·stride, R−1) (shadow LOD). */
-  pointStride?: number;
+  /** Geometry point j maps to strand point min(j·stride, R−1) (shadow and draw LOD); a number or uint node. */
+  pointStride?: N;
   /**
    * Per-point output of the shade kernel (uvec4: half2 rg, half2 b·alpha, snorm2 Txy, snorm2 Tz·0).
    * Without it the tangent comes from neighbouring points.
@@ -124,8 +124,8 @@ function ribbonVertex(o: RibbonInputs): {
 } {
   const R = o.R;
   const strand = instanceIndex.mul(uint(STRANDS_PER_INSTANCE)).add(uint((positionGeometry as N).z));
-  const stride = o.pointStride ?? 1;
-  const j = min(uint((positionGeometry as N).x).mul(uint(stride)), uint(R - 1));
+  const stride = typeof o.pointStride === 'number' ? uint(o.pointStride) : (o.pointStride ?? uint(1));
+  const j = min(uint((positionGeometry as N).x).mul(stride), uint(R - 1));
   const sideSign = (positionGeometry as N).y;
   const sRead = min(strand, max(o.strandCount, uint(1)).sub(1));
   const base = sRead.mul(uint(R));
@@ -160,8 +160,10 @@ function ribbonVertex(o: RibbonInputs): {
   const minW = pixelWorld.mul(o.minPixelWidth);
   const coverage = clamp(width.div(max(minW, 1e-9)), 0, 1);
   const pos = p.add(side.mul(sideSign.mul(max(width, minW)).mul(0.5)));
-  // Unused batch slots collapse to a degenerate point (culled as zero-area triangles).
-  const live = strand.lessThan(o.strandCount);
+  // Unused batch slots and culled strands (negative width) collapse to a degenerate point (zero-area triangles),
+  // and so do points the shade kernel skipped (hidden strands: all zero, a lit point has a unit tangent).
+  let live: N = strand.lessThan(o.strandCount).and(p4.w.greaterThanEqual(0));
+  if (shaded) live = live.and(shaded.z.bitOr(shaded.w).notEqual(uint(0)));
   return { pos: select(live, pos, vec3(0)), center: p, coverage, strand, j, index, shaded };
 }
 
@@ -201,6 +203,7 @@ export class HairMaterial extends THREE.NodeMaterial {
           widthScale: U.widthScale,
           minPixelWidth: U.minPixelWidth,
           strandCount: U.strandCount,
+          pointStride: U.drawStride,
           shaded: o.renderColor,
         });
         const c = r.shaded;
@@ -245,11 +248,23 @@ export class HairMaterial extends THREE.NodeMaterial {
         const sampleMask = nodeObject(new SampleMaskNode()) as N;
         this.maskNode = (
           Fn(() => {
-            // One bit per sample: assumes 4× MSAA.
+            // One bit per sample (assumes 4× MSAA), each from its own byte of a single PCG hash: 8-bit
+            // thresholds are plenty for coverage and save three hashes per fragment.
+            const h = pcgHash(base);
+            const threshold = uint(clamp(vAlpha, 0, 1).mul(256));
             const bits = uint(0).toVar();
             for (let s = 0; s < 4; s++) {
               bits.assign(
-                bits.bitOr(select(hash(base.add(uint(s * 26699))).lessThan(vAlpha), uint(1 << s), uint(0))),
+                bits.bitOr(
+                  select(
+                    h
+                      .shiftRight(uint(s * 8))
+                      .bitAnd(uint(255))
+                      .lessThan(threshold),
+                    uint(1 << s),
+                    uint(0),
+                  ),
+                ),
               );
             }
             // The output struct starts zeroed and a zero mask drops every sample, so write it on every path.

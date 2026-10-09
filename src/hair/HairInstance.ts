@@ -4,7 +4,7 @@ import * as THREE from 'three/webgpu';
 import { ColliderSet } from './colliders';
 import { buildGroom, type GroomOptions } from './groom/Groomer';
 import type { GroomData, GroomStyle, GrowthMesh } from './groom/types';
-import { HairGroup } from './HairGroup';
+import { HairGroup, type ReleaseBuffers } from './HairGroup';
 import { mergeHairParams, type DeepPartial, type HairParamsData } from './params';
 import type { HairLighting } from './render/HairLighting';
 import type { HairShadowMap } from './render/HairShadowPass';
@@ -24,6 +24,8 @@ export interface HairInstanceOptions {
   groom?: GroomOptions;
   /** Object whose world transform moves the hair bounds (root bone / object). */
   boundsObject?: THREE.Object3D;
+  /** Hair shadow map size (px); defaults to HairSystem.shadowResolution. Large grooms (a field) need more. */
+  shadowResolution?: number;
 }
 
 /** Injected by HairSystem.createInstance. */
@@ -31,6 +33,8 @@ export interface HairInstanceServices {
   lighting: HairLighting;
   shadowMap: HairShadowMap;
   shadowLayer: number;
+  /** Frees GPU buffers of disposed groups (and the deformer). */
+  release: ReleaseBuffers;
 }
 
 /** One character's hair: growth-mesh deformer, colliders, shadow map and its groom groups. */
@@ -97,6 +101,7 @@ export class HairInstance {
         lighting: this.services.lighting,
         shadowMap: this.shadowMap,
         shadowLayer: this.shadowLayer,
+        release: this.services.release,
       });
       this.root.add(group.mesh, group.shadowMesh, group.guideLines);
       return group;
@@ -143,6 +148,7 @@ export class HairInstance {
   dispose(): void {
     for (const g of this.groups) g.dispose();
     this.groups = [];
+    this.deformer.dispose(this.services.release);
     this.root.removeFromParent();
   }
 }

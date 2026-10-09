@@ -111,4 +111,20 @@ describe('ColliderSet', () => {
     expect(p.y).toBeCloseTo(1.55);
     expect(p.x).toBeCloseTo(0);
   });
+
+  it('swaps capsules after clear()', () => {
+    const set = new ColliderSet()
+      .add({ name: 'a', a: v(0, 0, 0), b: v(0, 1, 0), radius: 0.2, attach: null })
+      .add({ name: 'b', a: v(5, 0, 0), b: v(5, 1, 0), radius: 0.2, attach: null });
+    set.update(true);
+    expect(set.count.value).toBe(2);
+
+    set.clear().add({ name: 'c', a: v(2, 0, 0), b: v(2, 1, 0), radius: 0.1, attach: null });
+    set.update(true);
+    expect(set.count.value).toBe(1);
+    expect(set.capsules.map((c) => c.name)).toEqual(['c']);
+    // The old capsules no longer collide; the new one does.
+    expect(set.pushOut(v(0.05, 0.5, 0), 0xffffffff, 0.01)).toBe(false);
+    expect(set.pushOut(v(2.05, 0.5, 0), 0xffffffff, 0.01)).toBe(true);
+  });
 });

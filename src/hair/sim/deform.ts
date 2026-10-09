@@ -47,6 +47,8 @@ export class GrowthDeformer {
   readonly kernel: N;
 
   readonly source: DeformSource;
+  /** Storage buffers owned by this deformer (freed by dispose). */
+  private readonly buffers: N[];
 
   constructor(source: DeformSource) {
     this.source = source;
@@ -56,6 +58,7 @@ export class GrowthDeformer {
     const localN = instancedArray(toVec4(source.localNormals, 0), 'vec4').toReadOnly() as N;
     this.deformed = instancedArray(n * 2, 'vec4') as N;
     const out = this.deformed;
+    this.buffers = [local, localN, out];
 
     if (source.kind === 'rigid') {
       const world = uniform(source.object.matrixWorld);
@@ -73,6 +76,7 @@ export class GrowthDeformer {
       const mesh = source.mesh;
       const skinIndex = instancedArray(source.skinIndex, 'uvec4').toReadOnly() as N;
       const skinWeight = instancedArray(source.skinWeight, 'vec4').toReadOnly() as N;
+      this.buffers.push(skinIndex, skinWeight);
       const bones = buffer(mesh.skeleton.boneMatrices, 'mat4', mesh.skeleton.bones.length) as N;
       const bindMatrix = uniform(mesh.bindMatrix) as N;
       const bindMatrixInverse = uniform(mesh.bindMatrixInverse) as N;
@@ -100,6 +104,11 @@ export class GrowthDeformer {
         .compute(n, [64])
         .setName('hair.deform.skinned');
     }
+  }
+
+  dispose(release: (buffers: N[]) => void): void {
+    this.kernel.dispose();
+    release(this.buffers);
   }
 
   /** Brings CPU-side matrices up to date before the compute dispatch. */

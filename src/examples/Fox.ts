@@ -2,7 +2,8 @@ import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
 import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
-import { mergeHairParams, type HairParamsData } from '../hair/params';
+import { defaultGrassStyle } from '../hair/groom/styles/grassStyle';
+import { hairWind, mergeHairParams, type HairParamsData } from '../hair/params';
 import type { Example, ExampleContext } from './Example';
 import {
   FoxCharacter,
@@ -11,6 +12,8 @@ import {
   type FoxAnimation,
   type FoxGroomParams,
 } from './FoxCharacter';
+import { FoxPath, MAX_WOBBLE } from './FoxPath';
+import { GrassField, createGrassParams, type GrassParams } from './Grass';
 
 /** Default fur tuning (shared by every fox so the GUI drives all of them). */
 export function createFoxFurParams(substeps: number): HairParamsData {
@@ -42,6 +45,8 @@ export function createFoxFurParams(substeps: number): HairParamsData {
       frizz: 0.001,
       frizzFrequency: 5,
       lodStrandsPerPixel: 6,
+      // Short fur barely shows past the silhouette, so fur facing well away from the camera is skipped.
+      backCull: 0.5,
     },
     shading: {
       rootColor: '#c7bcb3',
@@ -70,30 +75,58 @@ export class FoxExample implements Example {
   private foxes: FoxCharacter[] = [];
   private params!: HairParamsData;
   private readonly groom: FoxGroomParams = defaultFoxGroom();
+  private grass: GrassField | null = null;
+  private grassParams!: GrassParams;
+  private readonly grassStyle = defaultGrassStyle();
+  /** One loop for every fox: they walk it at opposite angles, so they never meet. */
+  private readonly path = new FoxPath(5);
   private readonly settings = {
     animation: 'Walk' as FoxAnimation,
     moving: true,
     speed: 1,
     pathRadius: 1.3,
+    pathWiggle: 1,
     twoFoxes: false,
     showBody: true,
     showStrands: true,
     showGuides: false,
     showColliders: false,
+    grass: true,
+    pushRadius: 1,
+    showGrass: true,
+    showGrassGuides: false,
   };
   private rebuildTimer = 0;
+  private grassTimer = 0;
+  /** The spawn in progress, and whether settings changed during it (spawns must not overlap). */
+  private spawning: Promise<void> | null = null;
+  private respawnPending = false;
 
   async init(ctx: ExampleContext): Promise<void> {
     this.ctx = ctx;
     const { app, gui, lights, quality } = ctx;
     this.params = createFoxFurParams(quality.substeps);
+    this.grassParams = createGrassParams(quality.substeps, quality.strandScale);
     app.camera.position.set(2.6, 1.5, 2.9);
     app.controls.target.set(0, 0.35, 0);
     lights.focus.set(0, 0.4, 0);
     lights.focusRadius = 2.2;
     lights.update();
+    // A light crosswind (relative to the camera), so gusts roll across the grass.
+    Object.assign(hairWind.params, {
+      enabled: true,
+      strength: 1.8,
+      azimuth: -48,
+      elevation: 5,
+      turbulence: 0.45,
+      frequency: 0.6,
+      gust: 0.7,
+      gustPeriod: 6,
+    });
+    hairWind.sync();
     await loadFox();
-    await this.spawn();
+    await this.respawn();
+    this.setGrass(this.settings.grass);
 
     const f = gui.folder('Fox', true);
     f.addBinding(this.settings, 'animation', {
@@ -110,10 +143,122 @@ export class FoxExample implements Example {
       () => this.foxes.forEach((fx) => (fx.moving = this.settings.moving)),
       'follow path',
     );
-    num(f, this.settings, 'pathRadius', { min: 0.6, max: 3, label: 'path radius' }, () =>
-      this.foxes.forEach((fx) => (fx.pathRadius = this.settings.pathRadius)),
+    num(f, this.settings, 'pathRadius', { min: 0.6, max: 3, label: 'path radius' }, () => {
+      this.path.radius = this.settings.pathRadius;
+    });
+    num(
+      f,
+      this.settings,
+      'pathWiggle',
+      {
+        min: 0,
+        max: 1.5,
+        label: 'path wiggle',
+        hint: `How much the loop wanders in and out (0 = a circle; at most ±${Math.round(MAX_WOBBLE * 150)}% of the radius). Two foxes walk it on roughly opposite sides, so they never meet.`,
+      },
+      () => {
+        this.path.wiggle = this.settings.pathWiggle;
+      },
     );
-    toggle(f, this.settings, 'twoFoxes', () => this.spawn(), 'two foxes');
+    f.addButton({ title: 'New path' }).on('click', () => this.path.reseed((Math.random() * 2 ** 31) | 0));
+    toggle(f, this.settings, 'twoFoxes', () => void this.respawn(), 'two foxes');
+
+    const grass = gui.folder('Grass', true);
+    toggle(
+      grass,
+      this.settings,
+      'grass',
+      () => this.setGrass(this.settings.grass),
+      'grass',
+      'Prairie grass on the ground, simulated like hair.',
+    );
+    const regrow = () => this.scheduleGrassRegroom();
+    num(
+      grass,
+      this.grassStyle,
+      'height',
+      { min: 0.3, max: 2.5, label: 'grass height', hint: 'Length of the short grass (regrows it).' },
+      regrow,
+    );
+    num(
+      grass,
+      this.grassStyle,
+      'stalkHeight',
+      {
+        min: 0.3,
+        max: 1.6,
+        label: 'stalk height',
+        hint: 'Length of the tall seed stalks (regrows the grass).',
+      },
+      regrow,
+    );
+    num(
+      grass,
+      this.grassStyle,
+      'stalkAmount',
+      {
+        min: 0,
+        max: 3,
+        label: 'stalk amount',
+        hint: 'How much of the field the seed stalks cover (regrows the grass).',
+      },
+      regrow,
+    );
+    num(
+      grass,
+      this.settings,
+      'pushRadius',
+      {
+        min: 0,
+        max: 3,
+        label: 'fox push radius',
+        hint: 'Size of the shapes the foxes push the grass aside with.',
+      },
+      () => {
+        if (this.grass) this.grass.colliders.radiusScale = this.settings.pushRadius;
+      },
+    );
+    const perf = { cull: true, lodDistance: 4.5 };
+    const syncLod = () => {
+      for (const k of ['grass', 'stalks'] as const) {
+        const st = this.grassParams[k].style;
+        st.cullOffscreen = perf.cull;
+        // Stalks are sparse, so they keep a longer reach than the grass.
+        st.lodDistance = perf.lodDistance > 0 ? perf.lodDistance * (k === 'stalks' ? 4 / 3 : 1) : 0;
+      }
+      this.grass?.syncParams();
+    };
+    toggle(
+      grass,
+      perf,
+      'cull',
+      syncLod,
+      'skip off-screen blades',
+      'Faster: blades outside the view (with a margin for their shadows) are not simulated into strands, lit or drawn.',
+    );
+    num(
+      grass,
+      perf,
+      'lodDistance',
+      {
+        min: 0,
+        max: 12,
+        label: 'thin beyond (m)',
+        hint: 'Faster: beyond this distance from the camera, blades thin out (the rest get wider, so the ground stays covered). 0 = off.',
+      },
+      syncLod,
+    );
+    // Both layers feel the same wind (the Wind folder) with their own tuning.
+    const layers = grass.addFolder({ title: 'Grass & stalk settings', expanded: false });
+    const tabs = layers.addTab({ pages: [{ title: 'Grass' }, { title: 'Stalks' }] });
+    const syncGrass = () => this.grass?.syncParams();
+    (['grass', 'stalks'] as const).forEach((k, i) => {
+      addHairBasics(tabs.pages[i], this.grassParams[k], syncGrass);
+      addHairFolders(tabs.pages[i], this.grassParams[k], syncGrass);
+    });
+
+    // The wind moves both the fur and the grass.
+    addWindFolder(gui.pane);
 
     const fur = gui.folder('Fur', true);
     const sync = () => this.syncAll();
@@ -170,7 +315,6 @@ export class FoxExample implements Example {
       rebuild,
     );
 
-    addWindFolder(fur);
     addHairFolders(fur, this.params, sync);
   }
 
@@ -199,6 +343,36 @@ export class FoxExample implements Example {
       'show colliders',
       'Show the shapes the fur collides with.',
     );
+    toggle(f, this.settings, 'showGrass', () => this.applyGrassVisibility(), 'show grass');
+    toggle(
+      f,
+      this.settings,
+      'showGrassGuides',
+      () => this.applyGrassVisibility(),
+      'show grass guides',
+      'Show the simulated guide blades the drawn grass follows.',
+    );
+  }
+
+  private setGrass(on: boolean): void {
+    if (on && !this.grass) {
+      this.grass = new GrassField(this.ctx, this.grassStyle, this.grassParams);
+      this.grass.colliders.radiusScale = this.settings.pushRadius;
+      this.grass.attachFoxes(this.foxes);
+      this.applyGrassVisibility();
+    } else if (!on && this.grass) {
+      this.grass.dispose();
+      this.grass = null;
+    }
+  }
+
+  private applyGrassVisibility(): void {
+    this.grass?.instance.setVisibility(this.settings.showGrass, this.settings.showGrassGuides);
+  }
+
+  private scheduleGrassRegroom(): void {
+    clearTimeout(this.grassTimer);
+    this.grassTimer = window.setTimeout(() => this.grass?.regroom(), 300);
   }
 
   private syncAll(): void {
@@ -214,7 +388,28 @@ export class FoxExample implements Example {
     this.rebuildTimer = window.setTimeout(() => this.foxes.forEach((fx) => fx.regroom()), 300);
   }
 
+  /** Respawns the foxes, coalescing toggles that arrive while a spawn is still loading. */
+  private async respawn(): Promise<void> {
+    if (this.spawning) {
+      this.respawnPending = true;
+      return this.spawning;
+    }
+    this.spawning = (async () => {
+      try {
+        do {
+          this.respawnPending = false;
+          await this.spawn();
+        } while (this.respawnPending);
+      } finally {
+        this.spawning = null;
+      }
+    })();
+    return this.spawning;
+  }
+
   private async spawn(): Promise<void> {
+    // Drop the grass's copies of the old foxes' colliders before their bones go away.
+    this.grass?.attachFoxes([]);
     for (const fx of this.foxes) fx.dispose();
     this.foxes = [];
     const { app, hair, quality } = this.ctx;
@@ -229,8 +424,8 @@ export class FoxExample implements Example {
         guideScale: quality.guideScale,
         seed: 3 + i,
       });
-      fox.pathRadius = this.settings.pathRadius;
-      fox.pathAngle = i * Math.PI;
+      fox.path = this.path;
+      fox.pathIndex = i;
       fox.speedScale = this.settings.speed;
       fox.moving = this.settings.moving;
       fox.setAnimation(this.settings.animation, 0);
@@ -240,16 +435,20 @@ export class FoxExample implements Example {
       this.foxes.push(fox);
     }
     this.applyVisibility();
+    this.grass?.attachFoxes(this.foxes);
     hair.resetAll();
   }
 
   update(info: FrameInfo): void {
+    this.path.advance(info.dt, this.foxes[0]?.speed ?? 0, this.foxes.length);
     for (const fx of this.foxes) fx.update(info.dt);
   }
 
   hud(): string[] {
-    return [
+    const lines = [
       `foxes ${this.foxes.length}   ${this.settings.animation}${this.settings.moving ? ' (moving)' : ''}`,
     ];
+    if (this.grass) lines.push(this.grass.hud());
+    return lines;
   }
 }

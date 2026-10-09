@@ -5,6 +5,7 @@ import {
   catmullRom,
   frameRotate,
   frameToLocal,
+  gradientNoise1D3,
   orthoFrame,
   rootNormal,
   safeNormalize,
@@ -23,10 +24,10 @@ const {
   float,
   floor,
   instanceIndex,
+  length,
   max,
   min,
   mix,
-  mx_noise_vec3,
   pow,
   select,
   sin,
@@ -43,7 +44,20 @@ const TWO_PI = Math.PI * 2;
  * rotation-minimising frame (stable curl), renormalise segment lengths and collide.
  */
 export function buildInterpolateKernel(ctx: GroupContext): N {
-  const { G, R, u, guidePos, guideRootTri, guideFrames, strandData, deformed, renderPos, colliders } = ctx;
+  const {
+    G,
+    R,
+    u,
+    guidePos,
+    guideRootTri,
+    guideFrames,
+    strandData,
+    deformed,
+    renderPos,
+    strandHidden,
+    colliders,
+    view,
+  } = ctx;
   const U = u as unknown as Record<string, N>;
   const rootSpace = ctx.interpSpace === 'root';
 
@@ -89,94 +103,133 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
       const seed = float(gi.w.bitAnd(uint(0xffff)))
         .div(65535)
         .toVar();
-      const seedB = float(gi.w.shiftRight(uint(16)))
-        .div(65535)
-        .toVar();
+      // The frizz seed picks this strand's noise pattern, scrambled so similar seeds don't share lattice cells.
+      const frizzKey = gi.w.shiftRight(uint(16)).mul(uint(0x9e3779b9)).toVar();
       const segLen = Ls.div(R - 1).toVar();
 
-      const prevOut = vec3(root).toVar();
-      const T = vec3(SF.n).toVar();
-      const ref = vec3(SF.t).toVar();
+      // Per-strand culling (large grooms like grass): skip strands whose root is outside the view, padded by
+      // the strand length plus a margin so blades just off screen still cast shadows into view, and thin
+      // strands out beyond lodDistance (strands are shuffled, so the index rank is a uniform random number),
+      // widening the survivors to keep the coverage. Thinned strands shrink to nothing before they go.
+      const pad = Ls.add(0.4).negate();
+      let inView: N = dot(view.frustumPlanes.element(0).xyz, root)
+        .add(view.frustumPlanes.element(0).w)
+        .greaterThan(pad);
+      for (let k = 1; k < 6; k++) {
+        const pl = view.frustumPlanes.element(k);
+        inView = inView.and(dot(pl.xyz, root).add(pl.w).greaterThan(pad));
+      }
+      const offscreen = (U.cullOffscreen as N).equal(uint(1)).and(inView.not());
+      const camDist = max(length(root.sub(view.cameraPos)), 1e-3);
+      const keep = select(
+        U.lodDistance.greaterThan(0),
+        clamp(pow(U.lodDistance.div(camDist), 2), 0.02, 1),
+        float(1),
+      ).toVar();
+      const rank = float(s)
+        .add(0.5)
+        .div(max(float(U.strandCount), 1));
+      const lodWidth = clamp(float(1).div(keep.mul(0.9)), 1, 4)
+        .mul(float(1).sub(smoothstep(keep.mul(0.8), keep, rank)))
+        .toVar();
+      // Fur on the far side of the body: hidden by it, so it isn't lit or drawn, and only strands in the shadow
+      // map's prefix are still interpolated (they shadow the visible side).
+      const backFacing = U.backCull
+        .greaterThan(0)
+        .and(dot(SF.n, view.cameraPos.sub(root)).lessThan(U.backCull.mul(camDist).negate()));
+      strandHidden.element(s).assign(select(backFacing, uint(1), uint(0)));
+      const culled = offscreen
+        .or(rank.greaterThan(keep))
+        .or(backFacing.and(s.greaterThanEqual(U.shadowStrandCount as N)));
 
-      Loop({ start: uint(0), end: uint(R), type: 'uint', condition: '<' }, ({ i: j }: { i: N }) => {
-        const sj = float(j)
-          .div(R - 1)
-          .toVar();
-
-        // Sample every bound guide at its own arc length (never past its tip).
-        const samples = guides.map((gd) => {
-          const uu = clamp(sj.mul(Ls).div(max(gd.len, 1e-5)), 0, 1).mul(G - 1);
-          const k0 = min(uint(floor(uu)), uint(G - 2));
-          const f = uu.sub(float(k0));
-          const km = select(k0.greaterThan(uint(0)), k0.sub(1), uint(0));
-          const kp = min(k0.add(2), uint(G - 1));
-          const pt = catmullRom(
-            guidePos.element(gd.base.add(km)).xyz,
-            guidePos.element(gd.base.add(k0)).xyz,
-            guidePos.element(gd.base.add(k0.add(1))).xyz,
-            guidePos.element(gd.base.add(kp)).xyz,
-            f,
-          ).toVar();
-          const off = gd.frame ? frameToLocal(gd.origin, gd.frame, pt) : pt.sub(gd.origin);
-          return { pt, off };
+      If(culled, () => {
+        // Collapsed onto the root with a negative width: shading skips it and the ribbon degenerates.
+        Loop({ start: uint(0), end: uint(R), type: 'uint', condition: '<' }, ({ i: j }: { i: N }) => {
+          renderPos.element(s.mul(uint(R)).add(j)).assign(vec4(root, -1));
         });
-        // 'root' space takes offsets in each guide's root frame and re-applies them in this strand's frame,
-        // so strands keep the guide shape across curved skin; 'world' only translates.
-        const off = samples[0].off.mul(w.x).add(samples[1].off.mul(w.y)).add(samples[2].off.mul(w.z));
-        const target = (rootSpace ? root.add(frameRotate(SF, off)) : root.add(off)).toVar();
-        // Clumping towards the nearest guide's curve, converging at the tips.
-        target.assign(mix(target, samples[0].pt, U.clump.mul(pow(sj, U.clumpShape))));
+      }).Else(() => {
+        const prevOut = vec3(root).toVar();
+        const T = vec3(SF.n).toVar();
+        const ref = vec3(SF.t).toVar();
 
-        // Renormalise segment lengths (blended guides would otherwise shorten the strand).
-        const outPos = vec3(root).toVar();
-        If(j.greaterThan(uint(0)), () => {
-          outPos.assign(prevOut.add(safeNormalize(target.sub(prevOut), T).mul(segLen)));
-          If((U.collideStrands as N).equal(uint(1)), () => {
-            const maskJ = select(sj.lessThan(U.rootColliderRange), mask, uint(0xffffffff));
-            const col = collide(
-              colliders,
-              u,
-              outPos,
-              maskJ,
-              float(1),
-              float(0),
-              1e3,
-              sj.greaterThanEqual(U.sdfRootRange),
-            );
-            outPos.assign(prevOut.add(safeNormalize(col.x.sub(prevOut), T).mul(segLen)));
+        Loop({ start: uint(0), end: uint(R), type: 'uint', condition: '<' }, ({ i: j }: { i: N }) => {
+          const sj = float(j)
+            .div(R - 1)
+            .toVar();
+
+          // Sample every bound guide at its own arc length (never past its tip).
+          const samples = guides.map((gd) => {
+            const uu = clamp(sj.mul(Ls).div(max(gd.len, 1e-5)), 0, 1).mul(G - 1);
+            const k0 = min(uint(floor(uu)), uint(G - 2));
+            const f = uu.sub(float(k0));
+            const km = select(k0.greaterThan(uint(0)), k0.sub(1), uint(0));
+            const kp = min(k0.add(2), uint(G - 1));
+            const pt = catmullRom(
+              guidePos.element(gd.base.add(km)).xyz,
+              guidePos.element(gd.base.add(k0)).xyz,
+              guidePos.element(gd.base.add(k0.add(1))).xyz,
+              guidePos.element(gd.base.add(kp)).xyz,
+              f,
+            ).toVar();
+            const off = gd.frame ? frameToLocal(gd.origin, gd.frame, pt) : pt.sub(gd.origin);
+            return { pt, off };
           });
-          // Rotation-minimising frame via double reflection (Wang et al. 2008).
-          const v1 = outPos.sub(prevOut);
-          const c1 = max(dot(v1, v1), 1e-12);
-          const rL = ref.sub(v1.mul(dot(v1, ref).mul(2).div(c1)));
-          const tL = T.sub(v1.mul(dot(v1, T).mul(2).div(c1)));
-          const newT = safeNormalize(v1, T);
-          const v2 = newT.sub(tL);
-          const c2 = dot(v2, v2);
-          const rNew = select(
-            c2.greaterThan(1e-10),
-            rL.sub(v2.mul(dot(v2, rL).mul(2).div(max(c2, 1e-10)))),
-            rL,
-          );
-          ref.assign(safeNormalize(rNew.sub(newT.mul(dot(rNew, newT))), ref));
-          T.assign(newT);
-        });
+          // 'root' space takes offsets in each guide's root frame and re-applies them in this strand's frame,
+          // so strands keep the guide shape across curved skin; 'world' only translates.
+          const off = samples[0].off.mul(w.x).add(samples[1].off.mul(w.y)).add(samples[2].off.mul(w.z));
+          const target = (rootSpace ? root.add(frameRotate(SF, off)) : root.add(off)).toVar();
+          // Clumping towards the nearest guide's curve, converging at the tips.
+          target.assign(mix(target, samples[0].pt, U.clump.mul(pow(sj, U.clumpShape))));
 
-        // Curl (helix in the RMF) and frizz (smooth noise), both growing from the root.
-        const bv = cross(T, ref);
-        const phase = seed.mul(TWO_PI).add(sj.mul(U.curlTurns).mul(TWO_PI));
-        const amp = U.curlRadius.mul(smoothstep(0, U.curlRamp, sj));
-        const curl = ref
-          .mul(cos(phase))
-          .add(bv.mul(sin(phase)))
-          .mul(amp);
-        const frizz = mx_noise_vec3(vec3(sj.mul(U.frizzFrequency), seed.mul(37.0), seedB.mul(53.0))).mul(
-          U.frizz.mul(sj.mul(sj)),
-        );
-        // World-space strand width (root→tip taper × per-strand factor) rides along in .w.
-        const width = mix(U.rootWidth, U.tipWidth, pow(sj, U.taper)).mul(rb.w);
-        renderPos.element(s.mul(uint(R)).add(j)).assign(vec4(outPos.add(curl).add(frizz), width));
-        prevOut.assign(outPos);
+          // Renormalise segment lengths (blended guides would otherwise shorten the strand).
+          const outPos = vec3(root).toVar();
+          If(j.greaterThan(uint(0)), () => {
+            outPos.assign(prevOut.add(safeNormalize(target.sub(prevOut), T).mul(segLen)));
+            If((U.collideStrands as N).equal(uint(1)), () => {
+              const maskJ = select(sj.lessThan(U.rootColliderRange), mask, uint(0xffffffff));
+              const col = collide(
+                colliders,
+                u,
+                outPos,
+                maskJ,
+                float(1),
+                float(0),
+                1e3,
+                sj.greaterThanEqual(U.sdfRootRange),
+              );
+              outPos.assign(prevOut.add(safeNormalize(col.x.sub(prevOut), T).mul(segLen)));
+            });
+            // Rotation-minimising frame via double reflection (Wang et al. 2008).
+            const v1 = outPos.sub(prevOut);
+            const c1 = max(dot(v1, v1), 1e-12);
+            const rL = ref.sub(v1.mul(dot(v1, ref).mul(2).div(c1)));
+            const tL = T.sub(v1.mul(dot(v1, T).mul(2).div(c1)));
+            const newT = safeNormalize(v1, T);
+            const v2 = newT.sub(tL);
+            const c2 = dot(v2, v2);
+            const rNew = select(
+              c2.greaterThan(1e-10),
+              rL.sub(v2.mul(dot(v2, rL).mul(2).div(max(c2, 1e-10)))),
+              rL,
+            );
+            ref.assign(safeNormalize(rNew.sub(newT.mul(dot(rNew, newT))), ref));
+            T.assign(newT);
+          });
+
+          // Curl (helix in the RMF) and frizz (smooth noise), both growing from the root.
+          const bv = cross(T, ref);
+          const phase = seed.mul(TWO_PI).add(sj.mul(U.curlTurns).mul(TWO_PI));
+          const amp = U.curlRadius.mul(smoothstep(0, U.curlRamp, sj));
+          const curl = ref
+            .mul(cos(phase))
+            .add(bv.mul(sin(phase)))
+            .mul(amp);
+          const frizz = gradientNoise1D3(sj.mul(U.frizzFrequency), frizzKey).mul(U.frizz.mul(sj.mul(sj)));
+          // World-space strand width (root→tip taper × per-strand factor) rides along in .w.
+          const width = mix(U.rootWidth, U.tipWidth, pow(sj, U.taper)).mul(rb.w).mul(lodWidth);
+          renderPos.element(s.mul(uint(R)).add(j)).assign(vec4(outPos.add(curl).add(frizz), width));
+          prevOut.assign(outPos);
+        });
       });
     }) as N
   )()

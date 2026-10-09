@@ -7,6 +7,9 @@ import { equirectToIrradianceSH } from './envSH';
 
 const { luminance, max, mix, uniform, uniformArray, vec3 } = tsl;
 
+const tmpMat = new THREE.Matrix4();
+const tmpFrustum = new THREE.Frustum();
+
 export interface HairLight {
   /** Unit direction towards the light (world). */
   dir: N;
@@ -33,6 +36,9 @@ export class HairLighting {
     color: uniform(new THREE.Color(0, 0, 0)),
   };
   readonly cameraPos = uniform(new THREE.Vector3());
+  private readonly frustumData = Array.from({ length: 6 }, () => new THREE.Vector4());
+  /** Camera frustum planes: dot(xyz, p) + w ≥ 0 inside. */
+  readonly frustumPlanes = uniformArray(this.frustumData, 'vec4');
   readonly envIntensity = uniform(1);
   /** Environment colour saturation for hair (tames strongly tinted maps). */
   readonly envSaturation = uniform(1);
@@ -85,6 +91,13 @@ export class HairLighting {
     set(this.rim, rig.rim);
     set(this.fill, rig.fill);
     camera.getWorldPosition(this.cameraPos.value as THREE.Vector3);
+    // View frustum planes (inward normals, w = constant) for per-strand culling.
+    camera.updateMatrixWorld();
+    tmpMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    tmpFrustum.setFromProjectionMatrix(tmpMat, camera.coordinateSystem);
+    tmpFrustum.planes.forEach((pl, i) =>
+      this.frustumData[i].set(pl.normal.x, pl.normal.y, pl.normal.z, pl.constant),
+    );
     this.envIntensity.value = scene.environmentIntensity;
     this.envSaturation.value = rig.params.envSaturation;
   }

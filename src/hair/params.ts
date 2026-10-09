@@ -59,6 +59,8 @@ export interface WindParams {
   turbulence: number;
   frequency: number;
   gust: number;
+  /** Seconds between gusts at any one spot; the gust fronts roll downwind at the wind speed. */
+  gustPeriod: number;
 }
 
 /** Render-strand styling (live). */
@@ -84,8 +86,32 @@ export interface StyleParams {
   lodStrandsPerPixel: number;
   /** Width compensation exponent for LOD (1 = preserve coverage, 0.5 = compromise). */
   lodWidthExponent: number;
+  /**
+   * Draw LOD: draw every 2nd–4th strand point while segments stay at most this long on screen (device pixels),
+   * so far-away or small hair uses fewer triangles. 0 = always draw every point.
+   */
+  lodSegmentPx: number;
+  /**
+   * Sub-pixel LOD: while strands are thinner on screen than `minPixelWidth`, draw fewer of them (down to this
+   * fraction), each proportionally wider. Their coverage is the same on average; the hair just has fewer distinct
+   * strands. Up close, where strands are a pixel or more wide, every strand is drawn. 1 = off.
+   */
+  lodSubpixelDensity: number;
   /** Push render strands out of colliders (long hair on shoulders). */
   collide: boolean;
+  /** Skip strands whose root is outside the camera view (padded by the strand length, so their shadows stay). */
+  cullOffscreen: boolean;
+  /**
+   * Beyond this camera distance (m) strands thin out as 1/distance², widening the rest so the coverage stays
+   * the same (0 = off). Per strand, unlike the whole-groom LOD above, so it suits grooms spanning many depths.
+   */
+  lodDistance: number;
+  /**
+   * Skip strands whose root faces away from the camera (root normal · view < −backCull): fur on the far side of
+   * the body is hidden by it. Higher only skips strands further past the silhouette; 0 = off. Long fur on thin
+   * limbs shows further past the silhouette than short fur, so it needs a higher value.
+   */
+  backCull: number;
 }
 
 export interface ShadingParams {
@@ -146,6 +172,7 @@ export const defaultWind = (): WindParams => ({
   turbulence: 0.5,
   frequency: 0.8,
   gust: 0.5,
+  gustPeriod: 6,
 });
 
 export const defaultStyle = (): StyleParams => ({
@@ -165,7 +192,12 @@ export const defaultStyle = (): StyleParams => ({
   lodEnabled: true,
   lodStrandsPerPixel: 6,
   lodWidthExponent: 0.75,
+  lodSegmentPx: 12,
+  lodSubpixelDensity: 0.6,
   collide: false,
+  cullOffscreen: true,
+  lodDistance: 0,
+  backCull: 0,
 });
 
 export const defaultShading = (): ShadingParams => ({
@@ -231,6 +263,9 @@ class SharedWind {
   readonly turbulence = uniform(0);
   readonly frequency = uniform(0);
   readonly gust = uniform(0);
+  /** Gust front angular frequency (rad/s) and wavenumber along the wind (rad/m). */
+  readonly gustOmega = uniform(1);
+  readonly gustK = uniform(1);
 
   constructor() {
     this.sync();
@@ -244,6 +279,10 @@ class SharedWind {
     this.turbulence.value = w.turbulence;
     this.frequency.value = w.frequency;
     this.gust.value = w.gust;
+    // Fronts travel at the wind speed: wavelength = speed · period.
+    const period = Math.max(0.5, w.gustPeriod);
+    this.gustOmega.value = (2 * Math.PI) / period;
+    this.gustK.value = (2 * Math.PI) / (Math.max(speed, 0.1) * period);
   }
 }
 
@@ -286,6 +325,8 @@ export class HairUniforms {
   readonly windTurbulence = hairWind.turbulence;
   readonly windFrequency = hairWind.frequency;
   readonly windGust = hairWind.gust;
+  readonly windGustOmega = hairWind.gustOmega;
+  readonly windGustK = hairWind.gustK;
   readonly drag = uniform(1);
   // style
   readonly guideBlend = uniform(1);
@@ -297,6 +338,13 @@ export class HairUniforms {
   readonly frizz = uniform(0);
   readonly frizzFrequency = uniform(1);
   readonly collideStrands = uniform(0, 'uint');
+  readonly cullOffscreen = uniform(0, 'uint');
+  readonly lodDistance = uniform(0);
+  readonly backCull = uniform(0);
+  /** Every n-th strand point is drawn (draw LOD); the shade kernel skips the others. */
+  readonly drawStride = uniform(1, 'uint');
+  /** Strands drawn into the hair shadow map (a prefix): hidden strands beyond it needn't be interpolated. */
+  readonly shadowStrandCount = uniform(0, 'uint');
   readonly rootWidth = uniform(0);
   readonly tipWidth = uniform(0);
   readonly taper = uniform(1);
@@ -366,6 +414,9 @@ export class HairUniforms {
     this.frizz.value = st.frizz;
     this.frizzFrequency.value = st.frizzFrequency;
     this.collideStrands.value = st.collide ? 1 : 0;
+    this.cullOffscreen.value = st.cullOffscreen ? 1 : 0;
+    this.lodDistance.value = st.lodDistance;
+    this.backCull.value = st.backCull;
     this.rootWidth.value = st.rootWidth;
     this.tipWidth.value = st.tipWidth;
     this.taper.value = st.taper;

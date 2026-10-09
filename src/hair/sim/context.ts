@@ -15,6 +15,8 @@ export interface GroupContext {
   interpSpace: 'world' | 'root';
   u: HairUniforms;
   colliders: ColliderSet;
+  /** Camera position and frustum planes (see HairLighting), for per-strand culling and LOD. */
+  view: { cameraPos: N; frustumPlanes: N };
   /** Deformed growth mesh: [2i] world position, [2i+1] world normal. */
   deformed: N;
   /** Guide root triangle (uvec4: i0, i1, i2, collider mask). */
@@ -38,10 +40,15 @@ export interface GroupContext {
    * [2] root i0, i1, i2, RGBA8 color · [3] float bits u, v, w, width factor.
    */
   strandData: N;
-  /** Render strand points (vec4: world xyz, world width). */
+  /** Render strand points (vec4: world xyz, world width). A negative width marks a culled strand. */
   renderPos: N;
-  /** Per render point (uvec4): shaded color half(r,g), half(b, alpha), and the strand tangent snorm(x,y), snorm(z). */
+  /**
+   * Per render point (uvec4): shaded color half(r,g), half(b, alpha), and the strand tangent snorm(x,y), snorm(z).
+   * All zero for points that aren't drawn (culled or hidden strands).
+   */
   renderColor: N;
+  /** Per strand (uint): 1 when it faces away from the camera, so it is only interpolated for the shadow map. */
+  strandHidden: N;
   /** Temporally smoothed self-shadow transmittance per render point (vec2: key side, far side). */
   shadowHistory: N;
 }

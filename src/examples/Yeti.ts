@@ -52,6 +52,8 @@ export function createYetiFurParams(substeps: number): HairParamsData {
       curlTurns: 1.5,
       curlRamp: 0.4,
       lodStrandsPerPixel: 6,
+      // Long fur on the limbs shows well past the silhouette: only skip fur facing nearly straight away.
+      backCull: 0.75,
     },
     shading: {
       rootColor: '#b3c3cf',

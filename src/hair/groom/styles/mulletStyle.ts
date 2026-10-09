@@ -254,7 +254,7 @@ export function scalpMask(style: GroomStyle, positions: Float32Array, normals: F
   for (let i = 0; i < out.length; i++) {
     sp.position.fromArray(positions, i * 3);
     sp.normal.fromArray(normals, i * 3);
-    out[i] = style.density(sp);
+    out[i] = style.density(sp, style.group(sp));
   }
   return out;
 }

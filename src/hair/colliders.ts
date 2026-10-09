@@ -95,6 +95,12 @@ export class ColliderSet {
     return this;
   }
 
+  /** Removes every capsule (call update(true) after adding new ones, so they don't sweep from old positions). */
+  clear(): this {
+    this.capsules.length = 0;
+    return this;
+  }
+
   addSphere(name: string, center: THREE.Vector3, radius: number, attach: THREE.Object3D | null): this {
     return this.add({ name, a: center.clone(), b: center.clone(), radius, attach });
   }

@@ -157,6 +157,7 @@ export class App {
   resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    // The render scale caps the pixel ratio: it never supersamples beyond the display's density.
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.renderScale));
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
@@ -170,15 +171,24 @@ export class App {
     this.backdrop.floor.value.set(floor);
   }
 
-  async loadEnvironment(name: string, intensity = 1): Promise<void> {
+  private envRequest = 0;
+
+  /**
+   * Loads (or reuses) an HDR environment and applies it. Returns false if a newer request superseded this one
+   * while it loaded, so a slow download can't override a later choice.
+   */
+  async loadEnvironment(name: string, intensity = 1): Promise<boolean> {
+    const request = ++this.envRequest;
     let tex = this.envTextures.get(name);
     if (!tex) {
       tex = await new HDRLoader().loadAsync(`env/${name}`);
       tex.mapping = THREE.EquirectangularReflectionMapping;
       this.envTextures.set(name, tex);
     }
+    if (request !== this.envRequest) return false;
     this.scene.environment = tex;
     this.scene.environmentIntensity = intensity;
+    return true;
   }
 
   private antialiasing: AntialiasingMode = 'msaa';

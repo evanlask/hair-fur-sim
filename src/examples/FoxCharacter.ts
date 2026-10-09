@@ -13,6 +13,7 @@ import { ColliderDebug } from '../hair/render/ColliderDebug';
 import { OPAQUE_SHADOW_LAYER, applyHairShadow } from '../hair/render/HairShadowPass';
 import { createTextureSampler } from '../util/texture';
 import { weldedNormals } from '../util/weld';
+import { FoxPath } from './FoxPath';
 
 /** Model is authored in centimetres; this gives a ~1.1 m long fox. */
 export const FOX_SCALE = 0.007;
@@ -126,7 +127,7 @@ export interface FoxCharacterOptions {
   seed?: number;
 }
 
-/** A skinned, animated Khronos Fox with strand fur, walking a circular path. */
+/** A skinned, animated Khronos Fox with strand fur, walking a (shared) wobbly loop. */
 export class FoxCharacter {
   readonly root = new THREE.Group();
   readonly model: THREE.Object3D;
@@ -140,9 +141,9 @@ export class FoxCharacter {
   hair!: HairInstance;
   animation: FoxAnimation = 'Walk';
   moving = true;
-  pathCenter = new THREE.Vector3();
-  pathRadius = 1.3;
-  pathAngle = 0;
+  /** The loop it walks (shared between foxes, which the example advances) and its place among them. */
+  path = new FoxPath();
+  pathIndex = 0;
   speedScale = 1;
   private readonly geometry: THREE.BufferGeometry;
   private readonly sampler: ReturnType<typeof createTextureSampler>;
@@ -299,23 +300,23 @@ export class FoxCharacter {
 
   get speed(): number {
     if (!this.moving) return 0;
-    // Ground speed in m/s, roughly matched to each clip's stride.
-    return (this.animation === 'Run' ? 2.3 : this.animation === 'Walk' ? 0.62 : 0) * this.speedScale;
+    // Ground speed in m/s matched to each clip's stride: how fast a planted paw moves backwards relative to the
+    // body (measured from the clips, about 0.69 for Walk and 1.23 for Run, then trimmed by eye).
+    return (this.animation === 'Run' ? 1.2 : this.animation === 'Walk' ? 0.62 : 0) * this.speedScale;
   }
 
+  /** Poses the fox on its path (call after the path has advanced this frame). */
   update(dt: number): void {
-    // Survey stands still, so the speed slider doesn't apply to it.
-    this.mixer.update(dt * (this.animation === 'Survey' ? 1 : this.speedScale));
+    const a = this.path.foxAngle(this.pathIndex);
+    // The loop's length varies around it and the foxes drift ahead and back, so this fox's ground speed differs
+    // a little from the nominal one: match the stride to it so the paws don't slide. Survey stands still, so
+    // the speed slider doesn't apply.
     const v = this.speed;
-    if (v > 0) this.pathAngle += (v / this.pathRadius) * dt;
-    const a = this.pathAngle;
-    this.root.position.set(
-      this.pathCenter.x + Math.cos(a) * this.pathRadius,
-      this.pathCenter.y,
-      this.pathCenter.z + Math.sin(a) * this.pathRadius,
-    );
-    // Face along the path tangent (fox faces +Z in model space).
-    this.root.rotation.y = Math.atan2(-Math.sin(a), Math.cos(a));
+    const stride = v > 0 ? (this.path.stride(a) * this.path.foxRate(this.pathIndex)) / v : 1;
+    this.mixer.update(dt * (this.animation === 'Survey' ? 1 : this.speedScale * stride));
+    this.path.point(a, this.root.position);
+    // Face along the path (fox faces +Z in model space).
+    this.root.rotation.y = this.path.heading(a);
     this.root.updateMatrixWorld(true);
     this.colliderDebug.update();
   }

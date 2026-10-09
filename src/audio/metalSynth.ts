@@ -245,6 +245,8 @@ export async function renderMetalLoop(
   ) => {
     const src = ctx.createBufferSource();
     src.buffer = noise;
+    // Looped, so long hits (the 2.2 s crash) never run out of buffer after the random start offset.
+    src.loop = true;
     const f = ctx.createBiquadFilter();
     f.type = filterType;
     f.frequency.value = freq;

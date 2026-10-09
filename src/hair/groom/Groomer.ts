@@ -66,8 +66,9 @@ function triangleWeightFn(
     let best = 0;
     for (const [u, v, w] of corners) {
       sampler.evaluate(tri, u, v, w, sp);
-      if (style.group(sp) !== group) continue;
-      best = Math.max(best, style.density(sp));
+      const g = style.group(sp);
+      if (g !== group && g !== -1) continue;
+      best = Math.max(best, style.density(sp, group));
     }
     return best;
   };
@@ -75,8 +76,9 @@ function triangleWeightFn(
 
 /** Rejection test for an exact sample point. */
 function accept(style: GroomStyle, group: number, sp: SurfacePoint, rng: Rng): boolean {
-  if (style.group(sp) !== group) return false;
-  const d = style.density(sp);
+  const g = style.group(sp);
+  if (g !== group && g !== -1) return false;
+  const d = style.density(sp, group);
   return d > 0 && rng.next() < d;
 }
 
@@ -111,7 +113,7 @@ function buildGroup(
     guideHash.insert(sp.position.x, sp.position.y, sp.position.z);
     guidePoints.push(copySurfacePoint(sp, createSurfacePoint()));
   }
-  const guides = buildGuides(mesh, style, spec, guidePoints, opts, rng);
+  const guides = buildGuides(mesh, style, spec, group, guidePoints, opts, rng);
 
   // Render strands: random roots bound to the 3 nearest guides of the group.
   const strands = bindStrands(
@@ -183,6 +185,7 @@ function buildGuides(
   mesh: GrowthMesh,
   style: GroomStyle,
   spec: GroomGroupSpec,
+  group: number,
   points: SurfacePoint[],
   opts: GroomOptions,
   rng: Rng,
@@ -214,7 +217,7 @@ function buildGuides(
     shape.waveAmplitude = 0;
     shape.waveCount = 0;
     shape.bendTarget.set(0, -1, 0);
-    style.shape(p, shape);
+    style.shape(p, shape, group);
     const L = Math.max(shape.length, 1e-4);
     const h = L / (G - 1);
 
@@ -378,7 +381,7 @@ function bindStrands(
         mesh.indices[tri * 3],
         mesh.indices[tri * 3 + 1],
         mesh.indices[tri * 3 + 2],
-        packColor(style.color?.(r.p) ?? null),
+        packColor(style.color?.(r.p, group) ?? null),
       ],
       i * 4,
     );

@@ -31,17 +31,15 @@ const ITERATIONS = 4;
 const RELAX = 0.7;
 
 /**
- * Keeps a baked mesh SDF in step with linear-blend skinning (e.g. a bust whose neck bends).
- * Every frame, the cells near skin that isn't rigid with the SDF's object are refreshed by
- * inverse skinning: each cell finds the rest-pose point that the current pose moves onto it (a
- * warm-started fixed-point iteration) and takes the rest-pose distance there.
- * Two ways to know the skinning of a rest-pose point:
- * - dense: per-cell weights for at most 4 bones, interpolated from the closest triangle (`grid.weights`).
- *   Bone 0 must be rigid relative to the SDF's object; only cells near other bones are refreshed.
- * - per vertex: any number of bones; each cell takes the joints/weights of its closest vertex
- *   (`grid.vertex`). A first pass stores every cell's skinning map; the refresh blends the maps of the
- *   8 cells around a point trilinearly. Every cell near the skin is refreshed, so the whole grid can follow
- *   a fully animated character.
+ * Keeps a baked mesh SDF in step with linear-blend skinning. Every frame, cells near skin that isn't rigid with
+ * the SDF's object are refreshed by inverse skinning: a warm-started fixed-point iteration finds the rest-pose
+ * point the current pose moves onto the cell, and the cell takes the rest-pose distance there.
+ * The skinning of a rest-pose point comes from either:
+ * - dense `grid.weights`: up to 4 bones, interpolated from the closest triangle. Bone 0 must be rigid with the
+ *   SDF's object; only cells near other bones are refreshed.
+ * - per-vertex `grid.vertex`: any number of bones, from each cell's closest vertex. A first pass stores every
+ *   cell's skinning map and the refresh blends the 8 surrounding maps trilinearly; every cell near the skin is
+ *   refreshed.
  */
 export class SkinnedSdf {
   /** Dispatched in order every frame (per-vertex mode: per-cell skinning matrices, then the refresh). */
@@ -214,9 +212,8 @@ export class SkinnedSdf {
             x.subAssign(moveAt(x).sub(p).mul(RELAX));
           });
           pre.element(id).assign(vec4(x, 0));
-          // Each cell moves at most ~1 cm per frame (more than the skin moves in an idle or walk). Where the skin
-          // folds (armpits, creases) inverse skinning has no unique answer and a cell can switch between
-          // solutions (the arm vs the body beside it): it eases over instead of flickering.
+          // A cell's distance changes by at most ~1 cm (world) per frame, so where the skin folds (armpits) and
+          // inverse skinning can jump between solutions, the field eases over instead of flickering.
           const slot = target.element(gi.z.mul(ny).add(gi.y).mul(nx).add(gi.x));
           const old = float(slot).toVar();
           slot.assign(old.add(clamp(float(trilinear(rest, toGrid(x))).sub(old), -maxStep, maxStep)));

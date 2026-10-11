@@ -107,11 +107,10 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
       const frizzKey = gi.w.shiftRight(uint(16)).mul(uint(0x9e3779b9)).toVar();
       const segLen = Ls.div(R - 1).toVar();
 
-      // Per-strand culling (large grooms like grass): skip strands whose root is outside the view, padded by
-      // the strand length plus a margin so blades just off screen still cast shadows into view, and thin
-      // strands out beyond lodDistance (strands are shuffled, so the index rank is a uniform random number),
-      // widening the survivors to keep the coverage. Thinned strands shrink to nothing before they go. The kept
-      // fraction falls as distance^-1.5 rather than the ^-2 that keeps on-screen density constant: a gentler thinning.
+      // Per-strand culling: skip strands whose root is outside the view (padded by the strand length plus a
+      // margin so strands just off screen still shadow into view), and thin strands beyond lodDistance. Strands
+      // are shuffled, so the index rank acts as a uniform random number; survivors widen to keep the coverage and
+      // thinned ones shrink away first. The kept fraction falls as distance^-1.5, gentler than constant density.
       const pad = Ls.add(0.4).negate();
       let inView: N = dot(view.frustumPlanes.element(0).xyz, root)
         .add(view.frustumPlanes.element(0).w)

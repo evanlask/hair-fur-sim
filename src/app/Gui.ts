@@ -20,17 +20,24 @@ export interface NumberSpec {
   hint?: string;
 }
 
-/** Tweakpane pane. Frame timing lives in the stats overlay, not here. */
+/** Tweakpane pane ("Debug", closed at first to leave the view free). Frame timing lives in the stats overlay. */
 export class Gui {
   readonly pane: Pane;
 
   constructor() {
-    this.pane = new Pane({ title: 'Hair & Fur Simulation', expanded: true });
+    this.pane = new Pane({ title: 'Debug', expanded: false });
   }
 
   folder(title: string, expanded = false, parent: Container = this.pane): FolderApi {
     return parent.addFolder({ title, expanded });
   }
+}
+
+/** Dropdown options ({ label: value }) sorted by label, A to Z (ignoring case). */
+export function alphabetical<T>(options: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(options).sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
+  );
 }
 
 /** Sets a row's hover tooltip. */
@@ -217,7 +224,7 @@ export function addWindFolder(parent: Container): FolderApi {
 // Hair group controls
 
 type Section = 'physics' | 'style' | 'shading';
-type HairControl =
+export type HairControl =
   | { kind: 'num'; section: Section; spec: NumberSpec & { label: string; hint: string } }
   | { kind: 'toggle' | 'color'; section: Section; label: string; hint: string }
   | { kind: 'gravity'; spec: NumberSpec & { label: string; hint: string } };
@@ -229,7 +236,7 @@ const n = (section: Section, spec: NumberSpec & { label: string; hint: string })
 });
 
 /** Every hair parameter's control, keyed by parameter name. Basics and the folders share these. */
-const HAIR_CONTROLS = {
+export const HAIR_CONTROLS = {
   // physics: shape
   globalStiffness: n('physics', {
     min: 0,
@@ -562,7 +569,7 @@ export interface HairPanelOptions {
   /** Controls left out because they do nothing for this groom (no body, no curls). */
   hide?: HairControlId[];
 }
-type Layout = (HairControlId | '---' | `# ${string}`)[];
+export type Layout = (HairControlId | '---' | `# ${string}`)[];
 
 const BASICS: Layout = [
   'globalStiffness',
@@ -576,7 +583,8 @@ const BASICS: Layout = [
   'specular',
 ];
 
-const FOLDERS: [string, Layout][] = [
+/** The hair folders and what they hold, in order ('---' a gap, '# x' a heading). */
+export const FOLDERS: [string, Layout][] = [
   [
     'Motion',
     [
@@ -665,7 +673,7 @@ const FOLDERS: [string, Layout][] = [
 ];
 
 /** Gravity as one strength slider; the direction is kept (straight down if it was zero). */
-function gravityStrength(params: HairParamsData) {
+export function gravityStrength(params: HairParamsData) {
   const g = params.physics.gravity;
   return {
     get v() {
@@ -748,6 +756,11 @@ class HairControls {
 }
 
 const controlsByParams = new WeakMap<HairParamsData, HairControls>();
+
+/** Drops the cached controls of a params object whose panel was disposed, so a new panel starts clean. */
+export function forgetHairControls(params: HairParamsData): void {
+  controlsByParams.delete(params);
+}
 
 function controlsFor(params: HairParamsData, onChange: () => void, options: HairPanelOptions): HairControls {
   let ctl = controlsByParams.get(params);

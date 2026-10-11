@@ -1,4 +1,4 @@
-import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import * as THREE from 'three/webgpu';
@@ -11,6 +11,7 @@ import type { HairSystem } from '../hair/HairSystem';
 import type { HairParamsData } from '../hair/params';
 import { ColliderDebug } from '../hair/render/ColliderDebug';
 import { OPAQUE_SHADOW_LAYER, applyHairShadow } from '../hair/render/HairShadowPass';
+import { gltfLoader } from '../util/gltf';
 import { createTextureSampler } from '../util/texture';
 import { weldedNormals } from '../util/weld';
 import { FoxPath } from './FoxPath';
@@ -43,7 +44,7 @@ export const defaultFoxGroom = (): FoxGroomParams => ({
 
 let gltfPromise: Promise<GLTF> | null = null;
 export function loadFox(): Promise<GLTF> {
-  return (gltfPromise ??= new GLTFLoader().loadAsync('models/fox/Fox.glb'));
+  return (gltfPromise ??= gltfLoader().loadAsync('models/fox/Fox.glb'));
 }
 
 /** Region name per bone index (joint order of the Khronos Fox skin). */
@@ -300,17 +301,15 @@ export class FoxCharacter {
 
   get speed(): number {
     if (!this.moving) return 0;
-    // Ground speed in m/s matched to each clip's stride: how fast a planted paw moves backwards relative to the
-    // body (measured from the clips, about 0.69 for Walk and 1.23 for Run, then trimmed by eye).
+    // Ground speed (m/s) matched to each clip's stride (how fast a planted paw moves back relative to the body).
     return (this.animation === 'Run' ? 1.2 : this.animation === 'Walk' ? 0.62 : 0) * this.speedScale;
   }
 
   /** Poses the fox on its path (call after the path has advanced this frame). */
   update(dt: number): void {
     const a = this.path.foxAngle(this.pathIndex);
-    // The loop's length varies around it and the foxes drift ahead and back, so this fox's ground speed differs
-    // a little from the nominal one: match the stride to it so the paws don't slide. Survey stands still, so
-    // the speed slider doesn't apply.
+    // This fox's actual ground speed differs a little from the nominal one (the loop wobbles, the foxes drift):
+    // scale the clip to it so the paws don't slide. Survey stands still and ignores the speed slider.
     const v = this.speed;
     const stride = v > 0 ? (this.path.stride(a) * this.path.foxRate(this.pathIndex)) / v : 1;
     this.mixer.update(dt * (this.animation === 'Survey' ? 1 : this.speedScale * stride));

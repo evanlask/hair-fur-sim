@@ -3,7 +3,7 @@ import * as THREE from 'three/webgpu';
 import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
-import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, alphabetical, num, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { ColliderSet } from '../hair/colliders';
 import { applyHairColor, hairColorOptions, type HairColorName } from '../hair/colorPresets';
@@ -80,26 +80,26 @@ export class HairBallExample implements Example {
 
     const f = gui.folder('Hair Ball');
     f.addBinding(this.settings, 'shape', {
-      options: {
+      options: alphabetical({
         sphere: 'sphere',
         torus: 'torus',
         'rounded box': 'roundedBox',
         capsule: 'capsule',
         'torus knot': 'torusKnot',
-      },
+      }),
     }).on('change', () => {
       this.buildBody();
       this.buildHair();
     });
     f.addBinding(this.settings, 'motion', {
-      options: {
+      options: alphabetical({
         'drag only': 'none',
         orbit: 'orbit',
         bob: 'bob',
         shake: 'shake',
         spin: 'spin',
         swing: 'swing',
-      },
+      }),
     });
     num(f, this.settings, 'motionSpeed', { min: 0.1, max: 2, label: 'speed' }, () => {});
     num(f, this.settings, 'motionAmount', { min: 0, max: 2, label: 'amount' }, () => {});

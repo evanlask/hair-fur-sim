@@ -1,9 +1,9 @@
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREE from 'three/webgpu';
 
 import { BeatFollower } from '../audio/beatFollower';
 import { ColliderSet } from '../hair/colliders';
 import {
+  LPS,
   createMulletStyle,
   defaultMulletStyle,
   scalpMask,
@@ -17,20 +17,51 @@ import { ColliderDebug } from '../hair/render/ColliderDebug';
 import { OPAQUE_SHADOW_LAYER, applyHairShadow } from '../hair/render/HairShadowPass';
 import { bakeMeshSdf } from '../hair/sdf';
 import { tsl } from '../hair/sim/tsl';
+import { gltfLoader } from '../util/gltf';
 import { Inertializer } from '../util/inertialize';
-import { createPedestal } from './Pedestal';
+import { SkinMaterial, skinThickness } from './SkinMaterial';
 
 const { attribute, mix, texture, uniform, uv } = tsl;
 
 /** Model units → meters (≈0.25 m chin to crown). */
 export const LPS_SCALE = 0.053;
 /** Model y of the bust's flat bottom. */
-const LPS_BOTTOM = -3.973;
-/** Model-space point (x, z) under the torso, nudged towards the neck: the pedestal is centred here. */
-const LPS_BASE_X = 0;
-const LPS_BASE_Z = -0.6;
-/** Half-width of the pedestal top in meters (slimmer than the shoulders, like a museum bust pedestal). */
-const PEDESTAL_TOP_HALF_WIDTH = 0.13;
+export const LPS_BOTTOM = -3.973;
+/** Model-space point (x, z) under the torso, nudged towards the neck: the bust is centred over it. */
+export const LPS_BASE_X = 0;
+export const LPS_BASE_Z = -0.6;
+/** Radii of the scan's cranium round LPS.craniumCenter (model units). */
+export const LPS_CRANIUM_RADII = new THREE.Vector3(1.62, 1.82, 2.07);
+
+/** A capsule collider on the Lee scan: endpoints and radius in model units. */
+export interface LpsCapsule {
+  name: string;
+  a: [number, number, number];
+  b: [number, number, number];
+  r: number;
+}
+/**
+ * The ears as colliders (model units): two capsules each (back rim, front with the lobe), fitted to the scan and kept
+ * off the scalp above them, since roots inside a collider ignore it and that hair would fall through the ear.
+ */
+export const LPS_EAR_CAPSULES: LpsCapsule[] = [
+  { name: 'earL', a: [1.616, 1.739, -0.05], b: [1.49, 1.035, -0.097], r: 0.189 },
+  { name: 'earLFront', a: [1.508, 1.715, 0.165], b: [1.478, 0.899, 0.153], r: 0.165 },
+  { name: 'earR', a: [-1.793, 1.664, -0.036], b: [-1.671, 1.051, -0.057], r: 0.208 },
+  { name: 'earRFront', a: [-1.663, 1.716, 0.165], b: [-1.654, 0.91, 0.172], r: 0.173 },
+];
+/** Face colliders (model units): front, chin, jaw sides, cheeks and forehead, mirrored about the scan's midline. */
+export const LPS_FACE_CAPSULES: LpsCapsule[] = [
+  { name: 'face', a: [-0.08, 1.001, 1.965], b: [-0.08, -0.667, 0.936], r: 0.32 },
+  { name: 'chin', a: [-0.234, 0.078, 1.571], b: [0.074, 0.078, 1.571], r: 0.61 },
+  { name: 'jawL', a: [0.953, 0.878, 0.336], b: [0.498, -0.162, 1.253], r: 0.324 },
+  { name: 'jawR', a: [-1.113, 0.878, 0.336], b: [-0.658, -0.162, 1.253], r: 0.324 },
+  // Cheekbones and temples, so hair falling beside the face stays out of it (clear of the hair roots above).
+  { name: 'cheekL', a: [0.902, 1.411, 0.484], b: [0.514, 0.911, 1.499], r: 0.48 },
+  { name: 'cheekR', a: [-1.062, 1.411, 0.484], b: [-0.674, 0.911, 1.499], r: 0.48 },
+  // The forehead, under the hairline: hair falling over it rests on the skin instead of sinking in.
+  { name: 'brow', a: [-0.448, 2.31, 1.542], b: [0.288, 2.31, 1.542], r: 0.589 },
+];
 
 export type HeadMotion = 'still' | 'idle' | 'nod' | 'headbang' | 'roxbury' | 'lookAround';
 export type MulletGroomParams = Omit<MulletStyleParams, 'modelScale' | 'modelOrigin'>;
@@ -48,14 +79,16 @@ export function loadHead(): Promise<HeadAssets> {
   return (assetsPromise ??= (async () => {
     const base = 'models/lee-perry-smith/';
     const tl = new THREE.TextureLoader();
+    // The scan's colour and normal maps at their full 4096² (see LeePerrySmith_License.txt).
     const [gltf, map, normalMap, specMap] = await Promise.all([
-      new GLTFLoader().loadAsync(`${base}LeePerrySmith.glb`),
-      tl.loadAsync(`${base}Map-COL.jpg`),
-      tl.loadAsync(`${base}Infinite-Level_02_Tangent_SmoothUV.jpg`),
+      gltfLoader().loadAsync(`${base}LeePerrySmith.glb`),
+      tl.loadAsync(`${base}Map-COL-4k.jpg`),
+      tl.loadAsync(`${base}Map-NRM-4k.jpg`),
       tl.loadAsync(`${base}Map-SPEC.jpg`),
     ]);
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = 8;
+    normalMap.anisotropy = 8;
     const mesh = gltf.scene.children[0] as THREE.Mesh;
     return { geometry: mesh.geometry, map, normalMap, specMap };
   })());
@@ -159,17 +192,18 @@ export interface MulletCharacterOptions {
   groom: MulletGroomParams;
   strandScale: number;
   guideScale: number;
-  /** Height of the pedestal top (bust bottom) in meters. */
-  plinthHeight: number;
+  /** Height of the bust's base above the floor (m): it floats there. */
+  baseHeight: number;
 }
 
 /** Lee Perry-Smith bust with a procedural neck rig and a simulated mullet. */
 export class MulletCharacter {
   readonly root = new THREE.Group();
   readonly bust = new THREE.Group();
-  readonly plinth: THREE.Mesh;
   readonly mesh: THREE.SkinnedMesh;
-  readonly material: THREE.MeshPhysicalNodeMaterial;
+  readonly material: SkinMaterial;
+  /** Drawn (skinned) skin positions → the bust's rest pose round the head bone, for the ears' light (see update). */
+  private readonly craniumSpace = new THREE.Matrix4();
   readonly chest = new THREE.Bone();
   readonly neck = new THREE.Bone();
   readonly head = new THREE.Bone();
@@ -208,18 +242,10 @@ export class MulletCharacter {
   constructor(assets: HeadAssets, opts: MulletCharacterOptions) {
     this.opts = opts;
     this.root.name = opts.name;
-    this.root.position.y = opts.plinthHeight;
+    this.root.position.y = opts.baseHeight;
     this.bust.scale.setScalar(LPS_SCALE);
     this.bust.position.set(-LPS_BASE_X * LPS_SCALE, -LPS_BOTTOM * LPS_SCALE, -LPS_BASE_Z * LPS_SCALE);
     this.root.add(this.bust);
-
-    // Museum pedestal; its top is the bust's base.
-    this.plinth = createPedestal({ height: opts.plinthHeight, topHalfWidth: PEDESTAL_TOP_HALF_WIDTH });
-    this.plinth.castShadow = true;
-    this.plinth.receiveShadow = true;
-    this.plinth.layers.enable(OPAQUE_SHADOW_LAYER);
-    opts.hair.registerShadowReceiver(this.plinth.material as THREE.NodeMaterial);
-    this.root.add(this.plinth);
 
     // Procedural neck rig: chest → neck → head, weighted along a slanted jaw-to-nape plane.
     const geometry = assets.geometry.clone();
@@ -255,18 +281,31 @@ export class MulletCharacter {
     this.chest.add(this.neck);
     this.neck.add(this.head);
 
-    // Skin material with the scan textures; the scalp under the hair is tinted towards the root color.
-    this.material = new THREE.MeshPhysicalNodeMaterial({
-      normalMap: assets.normalMap,
-      roughness: 0.55,
-      specularIntensity: 0.4,
-      envMapIntensity: 0.55,
-    });
+    // Skin with the scan's textures and light through the ears (as in the Groom Studio); the scalp under the hair is
+    // tinted towards the root color.
+    geometry.setAttribute(
+      'thickness',
+      new THREE.BufferAttribute(skinThickness(geometry, LPS_SCALE, LPS.ears), 1),
+    );
+    this.material = new SkinMaterial(
+      {
+        attribute: 'thickness',
+        cranium: { c: LPS.craniumCenter, r: LPS_CRANIUM_RADII },
+        strength: 2,
+        craniumSpace: this.craniumSpace,
+      },
+      { normalMap: assets.normalMap, envMapIntensity: 0.55 },
+    );
     const tex = texture(assets.map, uv());
     const scalp = attribute('scalp', 'float');
     this.material.colorNode = mix(tex.rgb, this.scalpTint.mul(0.8), scalp.mul(0.7));
-    // Less specular where hair covers the scalp (dark tinted skin otherwise mirrors the blue rim light).
-    this.material.specularIntensityNode = mix(0.4, 0.08, scalp);
+    // The scan's specular map: oily forehead, nose and lips shine, the beard's stubble doesn't (and is rougher).
+    // Less where hair covers the scalp (dark tinted skin otherwise mirrors the blue rim light).
+    const shine = texture(assets.specMap, uv()).r;
+    this.material.specularIntensityNode = mix(shine.mul(0.6), 0.08, scalp);
+    this.material.roughnessNode = shine.mul(-0.2).add(0.65);
+    // Both faces into the shadow map: back faces alone let the key light through the head onto the far ear's bowl.
+    this.material.shadowSide = THREE.DoubleSide;
     this.mesh = new THREE.SkinnedMesh(geometry, this.material);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -306,20 +345,15 @@ export class MulletCharacter {
         attach: bone,
       });
     add('cranium', this.head, [-0.073, 2.2, 0.0], [-0.073, 2.1, 0.15], 1.72);
-    add('face', this.head, [-0.08, 1.3, 1.05], [-0.08, -0.2, 1.2], 0.95);
-    add('jaw', this.head, [-0.08, 0.5, 0.2], [-0.08, -0.45, 0.55], 1.1);
-    // The ears stop just below the hairline: roots inside a collider ignore it, so hair growing right above
-    // the ear would otherwise fall straight through it.
-    add('earL', this.head, [1.68, 0.95, -0.1], [1.68, 1.72, -0.12], 0.32);
-    add('earR', this.head, [-1.82, 0.95, -0.1], [-1.82, 1.72, -0.12], 0.32);
+    for (const c of LPS_FACE_CAPSULES) add(c.name, this.head, c.a, c.b, c.r);
+    for (const e of LPS_EAR_CAPSULES) add(e.name, this.head, e.a, e.b, e.r);
     add('neck', this.neck, [-0.08, -0.4, -0.45], [-0.08, -1.6, -0.6], 1.12);
     this.bakeTorsoSdf();
   }
 
   /**
    * Accurate collisions for the bust (shoulders, back, chest): a narrow-band SDF baked from the
-   * scan, unioned with the plinth top so long hair can rest on the ledge instead of sinking into
-   * it. The base of the neck is partly skinned to the neck bone, so that part of the SDF follows
+   * scan. The base of the neck is partly skinned to the neck bone, so that part of the SDF follows
    * the skinning every frame (otherwise hair clips into it when the head pitches forward).
    */
   private bakeTorsoSdf(): void {
@@ -338,23 +372,12 @@ export class MulletCharacter {
       for (let k = 0; k < 4; k++)
         weights[i * 4 + skinIndex.getComponent(i, k)] += skinWeight.getComponent(i, k);
     }
-    // Covers the shoulders, back and chest (the pedestal has its own collider: the bust can be dragged off it).
+    // Covers the shoulders, back and chest.
     const min = new THREE.Vector3(-4.8, -5.6, -4.8);
     const max = new THREE.Vector3(4.8, -0.9, 1.5);
     const grid = bakeMeshSdf(positions, normals, g.index!.array, min, max, 0.12, 0.7, weights);
     // The neck tilts up to ~0.5 rad, moving the skin at its base by under 3 cm (padding 0.6 model units ≈ 3.2 cm).
     this.colliders.setSdf(grid, this.mesh, { mesh: this.mesh, padding: 0.6 });
-    // Pedestal top: a rounded box that stays with the pedestal, so long hair rests on its ledge.
-    const slab = 0.05;
-    const top = new THREE.Object3D();
-    top.position.set(0, -slab, 0);
-    this.plinth.add(top);
-    this.plinth.updateMatrixWorld(true);
-    this.colliders.setShape(
-      'box',
-      new THREE.Vector4(PEDESTAL_TOP_HALF_WIDTH, slab, PEDESTAL_TOP_HALF_WIDTH, 0.006),
-      top,
-    );
   }
 
   /** (Re)grooms in the rest pose. */
@@ -431,6 +454,13 @@ export class MulletCharacter {
     this.neck.rotation.set(pitch * 0.42, yaw * 0.4, roll * 0.4);
     this.head.rotation.set((pitch + lag) * 0.58, yaw * 0.6, roll * 0.6);
     this.root.updateMatrixWorld(true);
+    // Undoes the head bone's skinning (bindMatrixInverse · head · head⁻¹ at bind · bindMatrix), so the ears' light
+    // test sees the cranium where the head is now.
+    this.craniumSpace
+      .multiplyMatrices(this.mesh.bindMatrixInverse, this.head.matrixWorld)
+      .multiply(this.mesh.skeleton.boneInverses[2])
+      .multiply(this.mesh.bindMatrix)
+      .invert();
     this.colliderDebug.update();
   }
 

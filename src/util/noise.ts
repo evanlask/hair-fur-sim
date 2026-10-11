@@ -1,4 +1,4 @@
-/** Deterministic 2D noise for groom styles (which get no RNG, so they hash positions). */
+/** Deterministic noise for groom styles (which get no RNG, so they hash positions) and brushes. */
 
 /** Integer lattice hash → [0, 1). */
 export function hash2(ix: number, iz: number, seed = 0): number {
@@ -21,6 +21,36 @@ export function valueNoise2(x: number, z: number, seed = 0): number {
   const c = hash2(ix, iz + 1, seed);
   const d = hash2(ix + 1, iz + 1, seed);
   return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
+}
+
+/** Integer lattice hash in 3D → [0, 1). */
+export function hash3(ix: number, iy: number, iz: number, seed = 0): number {
+  let h =
+    Math.imul(ix | 0, 0x27d4eb2d) ^
+    Math.imul(iy | 0, 0x7feb352d) ^
+    Math.imul(iz | 0, 0x165667b1) ^
+    Math.imul(seed | 0, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Smooth value noise in [0, 1) of a point in space, one lattice cell per unit. */
+export function valueNoise3(x: number, y: number, z: number, seed = 0): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const iz = Math.floor(z);
+  const fx = fade(x - ix);
+  const fy = fade(y - iy);
+  const fz = fade(z - iz);
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  const plane = (dz: number) =>
+    lerp(
+      lerp(hash3(ix, iy, iz + dz, seed), hash3(ix + 1, iy, iz + dz, seed), fx),
+      lerp(hash3(ix, iy + 1, iz + dz, seed), hash3(ix + 1, iy + 1, iz + dz, seed), fx),
+      fy,
+    );
+  return lerp(plane(0), plane(1), fz);
 }
 
 /** Fractal value noise in [0, 1), normalised over octaves. */

@@ -22,7 +22,7 @@ export const trackLabel = (t: { title: string; genre: string }) => `${t.title} (
 /** The synthesized metal riff (source 'metal'). */
 export const METAL_RIFF = { title: 'Headbanger Riff', genre: 'metal' };
 
-/** Menu order after the metal riff; the first track is the default. */
+/** The first track is the default (the menu lists them A to Z). */
 export const MUSIC_LIBRARY: LibraryTrack[] = [
   {
     id: 'what-is-love',

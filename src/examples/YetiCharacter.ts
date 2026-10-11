@@ -1,4 +1,4 @@
-import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { attribute, mix, texture, uniform, uv } from 'three/tsl';
 import * as THREE from 'three/webgpu';
 
@@ -12,6 +12,7 @@ import type { HairParamsData } from '../hair/params';
 import { ColliderDebug } from '../hair/render/ColliderDebug';
 import { OPAQUE_SHADOW_LAYER, applyHairShadow } from '../hair/render/HairShadowPass';
 import { bakeMeshSdf } from '../hair/sdf';
+import { gltfLoader } from '../util/gltf';
 import { createTextureSampler } from '../util/texture';
 
 /** Model units → meters: ~1.25 m to the top of the head, ~1.65 m with the antlers. */
@@ -44,7 +45,7 @@ export const defaultYetiGroom = (): YetiGroomParams => ({
 
 let gltfPromise: Promise<GLTF> | null = null;
 export function loadYeti(): Promise<GLTF> {
-  return (gltfPromise ??= new GLTFLoader().loadAsync('models/yeti/Yeti.gltf'));
+  return (gltfPromise ??= gltfLoader().loadAsync('models/yeti/Yeti.gltf'));
 }
 
 /** Fur region for a joint of the Babylon.js Yeti skeleton. */
@@ -328,9 +329,8 @@ export class YetiCharacter {
   }
 
   /**
-   * Accurate body collisions: a narrow-band SDF of the skin that follows the skeleton every frame, so fur
-   * rests on the body's actual (moving) shape. Capsules alone sit inside the bulges of the back and
-   * shoulders, and fur hanging over a bulge would sink under the skin and leave a bare slit below it.
+   * A narrow-band SDF of the skin that follows the skeleton every frame. Capsules alone sit inside the bulges of
+   * the back and shoulders, so fur hanging over a bulge would sink under the skin.
    */
   private bakeBodySdf(): void {
     const g = this.geometry;
@@ -386,6 +386,12 @@ export class YetiCharacter {
     const handFootBones = new Set(
       this.mesh.skeleton.bones.flatMap((b, i) =>
         /Wrist|Index|Middle|Pinky|Thumb|Ankle|Foot|Toe/.test(b.name) ? [i] : [],
+      ),
+    );
+    // The fingers past the knuckles (the first segments meet the cuffs and palms).
+    const fingerBones = new Set(
+      this.mesh.skeleton.bones.flatMap((b, i) =>
+        /(Index|Middle|Pinky|Thumb)[2-4]$/.test(b.name) ? [i] : [],
       ),
     );
     // Landmarks in model units (bind pose): the mouth's lower lip tops out at y ≈ 31, the neck crease under the
@@ -477,7 +483,11 @@ export class YetiCharacter {
       densityOverride: (this.coverage = (sp: SurfacePoint) => {
         const m = toModel(sp);
         let handOrFoot = 0;
-        for (const [bone, w] of sp.bones ?? []) if (handFootBones.has(bone)) handOrFoot += w;
+        let finger = 0;
+        for (const [bone, w] of sp.bones ?? []) {
+          if (handFootBones.has(bone)) handOrFoot += w;
+          if (fingerBones.has(bone)) finger += w;
+        }
         const texture = () => {
           if (!this.sampler || !sp.uv) return 1;
           const c = this.sampler(sp.uv.x, sp.uv.y);
@@ -495,8 +505,9 @@ export class YetiCharacter {
         if (Math.abs(m.x) < 6.3 && m.y > 29.4 && m.y < 32.2 && m.z > 1 && m.z < 6.3 - 0.09 * m.x * m.x)
           return 0;
         // The texture's blue marks bare skin on the palms, fingers and toes (the white cuffs are fur) and in the
-        // eye sockets. Elsewhere its bluish brush strokes are painted fur, not skin.
-        if (handOrFoot > 0.3) return texture();
+        // eye sockets. Elsewhere its bluish brush strokes are painted fur, not skin. Fingers are always bare
+        // (a few light texels on them would grow stray strands).
+        if (handOrFoot > 0.3) return texture() * (1 - sm(finger, 0.3, 0.6));
         if (Math.abs(m.x) < 4.4 && m.y > 33.1 && m.y < 35.9 && m.z > 1) return texture();
         return 1;
       }),

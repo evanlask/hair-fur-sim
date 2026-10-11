@@ -17,6 +17,7 @@ import {
 import * as THREE from 'three/webgpu';
 
 import type { HairPanelOptions } from '../app/Gui';
+import { count } from '../app/Stats';
 import { ColliderSet } from '../hair/colliders';
 import { createGrassStyle, type GrassStyleParams } from '../hair/groom/styles/grassStyle';
 import { rigidGrowth } from '../hair/growth';
@@ -284,8 +285,7 @@ export class GrassField {
 
   hud(): string {
     const [grass, stalks] = this.instance.groups;
-    const k = (n: number) => `${Math.round(n / 1000)}k`;
-    return `grass ${k(grass?.activeStrands ?? 0)} blades · ${k(stalks?.activeStrands ?? 0)} stalks`;
+    return `grass ${count(grass?.activeStrands ?? 0)} blades · ${count(stalks?.activeStrands ?? 0)} stalks`;
   }
 
   dispose(): void {

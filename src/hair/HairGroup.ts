@@ -103,12 +103,16 @@ export class HairGroup {
   readonly depthMaterial: HairDepthMaterial;
   readonly guideLines: THREE.LineSegments;
   readonly kernels: { roots: N; reset: N; solve: N; interpolate: N; shade: N };
-  readonly maxLength: number;
+  /** Longest guide (m); follows the data after a reshape (see refreshStatic). */
+  maxLength: number;
   private readonly profile: N;
   private readonly profileData: Float32Array;
   /** Strands currently simulated/drawn (≤ ctx.Ns). */
   activeStrands: number;
   needsReset = true;
+  /** Off: HairSystem skips the group's kernels and hides it (see setEnabled). */
+  enabled = true;
+  private readonly staticBuffers: StaticBuffers;
 
   readonly data: GroomGroupData;
 
@@ -127,7 +131,7 @@ export class HairGroup {
     const R = data.strands.points;
     const Ns = data.strands.count;
     this.release = opts.release;
-    const st = getStatic(data);
+    const st = (this.staticBuffers = getStatic(data));
     this.profileData = new Float32Array(G * 4);
     this.profile = instancedArray(this.profileData, 'vec4') as N;
 
@@ -259,6 +263,31 @@ export class HairGroup {
     const attr = (this.profile as { value: THREE.BufferAttribute }).value;
     (attr.array as Float32Array).set(this.profileData);
     attr.needsUpdate = true;
+  }
+
+  /** Turns the group on or off; it restarts from its rest pose when turned back on (its root frames are stale). */
+  setEnabled(on: boolean): void {
+    if (on && !this.enabled) this.needsReset = true;
+    this.enabled = on;
+  }
+
+  /**
+   * Uploads the groom data again after it changed in place (`reshapeGroomGroup`): the guide buffers, which share
+   * the groom's arrays, and with `strands` the packed strand data.
+   */
+  refreshStatic(strands = false): void {
+    const st = this.staticBuffers;
+    for (const node of [st.guideRootTri, st.guideRootBary, st.guideRest])
+      (node as { value: THREE.BufferAttribute }).value.needsUpdate = true;
+    if (strands) {
+      // Only the lengths change in place (bindings stay): copy each strand's into its packed slot (see packStrands).
+      const attr = (st.strandData as { value: THREE.BufferAttribute }).value;
+      const packed = new Float32Array((attr.array as Uint32Array).buffer);
+      const w = this.data.strands.weights;
+      for (let i = 0; i < this.data.strands.count; i++) packed[i * 16 + 7] = w[i * 4 + 3];
+      attr.needsUpdate = true;
+    }
+    this.maxLength = this.data.maxLength;
   }
 
   setActiveStrands(n: number): void {

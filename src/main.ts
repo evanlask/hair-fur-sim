@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 
 import { App, WebGPUUnavailableError } from './app/App';
-import { Gui, addSimulationControls, num, tip } from './app/Gui';
+import { Gui, addSimulationControls, alphabetical, num, tip } from './app/Gui';
 import { LIGHTING_PRESETS, type LightingName, type LightingPreset } from './app/lightingPresets';
 import { LightRig } from './app/LightRig';
 import { Loading } from './app/Loading';
@@ -11,7 +11,8 @@ import type { Example, ExampleContext } from './examples/Example';
 import { HairSystem } from './hair/HairSystem';
 import { hairRenderSettings } from './hair/render/HairMaterial';
 
-const EXAMPLES: Record<string, { title: string; load: () => Promise<Example> }> = {
+/** The examples; `lighting` is the look one opens with (the studio look if unset). */
+const EXAMPLES: Record<string, { title: string; load: () => Promise<Example>; lighting?: LightingName }> = {
   hairball: {
     title: 'Hair Ball',
     load: async () => new (await import('./examples/HairBall')).HairBallExample(),
@@ -19,6 +20,12 @@ const EXAMPLES: Record<string, { title: string; load: () => Promise<Example> }> 
   fox: { title: 'Fox', load: async () => new (await import('./examples/Fox')).FoxExample() },
   wayne: { title: 'Wayne', load: async () => new (await import('./examples/Mullet')).MulletExample() },
   yeti: { title: 'Yeti', load: async () => new (await import('./examples/Yeti')).YetiExample() },
+  studio: {
+    title: 'Groom Studio',
+    load: async () => new (await import('./examples/GroomStudio')).GroomStudioExample(),
+    // Neutral light for judging hair and skin colours (the studio look's coloured gels tint the shadows).
+    lighting: 'neutral studio',
+  },
 };
 /** Renamed examples, so old links still work. */
 const EXAMPLE_ALIASES: Record<string, string> = { mullet: 'wayne' };
@@ -31,9 +38,15 @@ function showStatus(title: string, body: string): void {
   document.getElementById('loading')!.hidden = true;
 }
 
-const HELP_HTML = `
+/** Help entries of the loaded example (see Example.help), and whether they replace the general ones. */
+let exampleHelp = '';
+let generalHelp = true;
+
+const helpHtml = () =>
+  generalHelp
+    ? `
   <ul class="help">
-    <li><b>Examples</b>: switch with the tabs at the top left (Hair Ball, Fox, Wayne, Yeti).</li>
+    <li><b>Examples</b>: switch with the tabs at the top left (Hair Ball, Fox, Wayne, Yeti, Groom Studio).</li>
     <li><b>Camera</b>: left-drag on empty space to orbit, right-drag to pan, mouse wheel to zoom.</li>
     <li><b>Grab &amp; shake</b>: left-drag the hair ball, Wayne's bust or the yeti and let go. It springs back and the hair swings.</li>
     <li><b>Panels</b> (right), all live; hover a setting for what it does:
@@ -50,7 +63,10 @@ const HELP_HTML = `
       for the rest, and goes back to idle when the music stops.
       <i>Beat sync</i> has tap tempo (<b>T</b>), ×2 / ÷2, <i>move</i> (on the beat, every ½ beat for double time, or every 2
       or 4 beats) and a sync offset.</li>
+    ${exampleHelp}
   </ul>
+  <p style="opacity:.7">Press <b>H</b> to toggle this help · click anywhere to close.</p>`
+    : `${exampleHelp}
   <p style="opacity:.7">Press <b>H</b> to toggle this help · click anywhere to close.</p>`;
 
 function toggleHelp(): void {
@@ -59,7 +75,7 @@ function toggleHelp(): void {
     el.hidden = true;
     return;
   }
-  showStatus('Help', HELP_HTML);
+  showStatus('Help', helpHtml());
   el.dataset.kind = 'help';
   el.onclick = () => (el.hidden = true);
 }
@@ -119,9 +135,15 @@ async function main(): Promise<void> {
   app.setRenderScale(quality.renderScale);
   const lights = new LightRig(app.scene, app.renderer);
   lights.params.shadowMapSize = quality.shadowMapSize;
+  const look = EXAMPLES[key].lighting ?? 'studio';
+  if (look !== 'studio') {
+    const preset: LightingPreset = LIGHTING_PRESETS[look];
+    Object.assign(lights.params, preset.light);
+    app.setBackdrop(preset.backdrop.top, preset.backdrop.bottom, preset.backdrop.floor);
+  }
   lights.apply();
   await loading.step('Loading lighting…');
-  await app.loadEnvironment(LIGHTING_PRESETS.studio.env, lights.params.envIntensity);
+  await app.loadEnvironment(LIGHTING_PRESETS[look].env, lights.params.envIntensity);
 
   const gui = new Gui();
   const hair = new HairSystem(app.renderer, app.scene, app.camera, lights);
@@ -133,15 +155,17 @@ async function main(): Promise<void> {
   await loading.step(`Loading ${EXAMPLES[key].title}…`);
   const example = await EXAMPLES[key].load();
   await example.init(ctx);
+  exampleHelp = example.help ?? '';
+  generalHelp = !example.helpOnly;
   hair.registerShadowReceiver(app.floor.material as THREE.NodeMaterial);
 
-  addLightingFolder(gui, app, lights, hair);
-  addRenderingFolder(gui, app, hair, quality, params);
+  addLightingFolder(gui, app, lights, hair, look);
+  addRenderingFolder(gui, app, hair, quality, params, example);
   const view = gui.folder('View & simulation', false);
   example.viewControls(view);
   view.addBlade({ view: 'separator' });
   addSimulationControls(view, app, hair);
-  addPresetControls(gui, key);
+  if (!example.ownsState) addPresetControls(gui, key);
 
   app.onUpdate = (info) => {
     stats.beginCpu();
@@ -150,9 +174,17 @@ async function main(): Promise<void> {
     example.update(hair.paused ? { ...info, dt: hair.stepOnce ? 1 / 60 : 0 } : info);
     hair.update(info.dt, info.time);
   };
+  const aaLabel = () => {
+    const mode = app.getAntialiasing();
+    if (mode === 'msaa') return app.samples > 1 ? `MSAA ${app.samples}×` : 'no AA';
+    return mode.toUpperCase();
+  };
   app.onAfterRender = (info) => {
     stats.endCpu();
-    stats.update(info.realDt, hair.stats(), example.hud?.() ?? []);
+    stats.markSubmitted();
+    const c = app.renderer.domElement;
+    const view = `${c.width}×${c.height}   ${aaLabel()}   ${quality.name}`;
+    stats.update(info.realDt, hair.stats(), example.hud?.() ?? [], view);
     // The first frames compile the shaders; the scene is ready once they are through.
     if (info.frame === 2) loading.hide();
   };
@@ -215,6 +247,7 @@ function addRenderingFolder(
   hair: HairSystem,
   quality: QualityPreset,
   params: URLSearchParams,
+  example: Example,
 ): void {
   const rendering = gui.folder('Rendering', true);
   const q = {
@@ -222,7 +255,7 @@ function addRenderingFolder(
     renderScale: quality.renderScale,
     toneMapping: app.renderer.toneMapping as number,
   };
-  tip(
+  const presetBinding = tip(
     rendering.addBinding(q, 'preset', {
       label: 'quality',
       options: { low: 'low', medium: 'medium', high: 'high', ultra: 'ultra' },
@@ -230,6 +263,12 @@ function addRenderingFolder(
     'Reloads the page with another quality preset (strand counts, shadow sizes, substeps).',
   ).on('change', () => {
     if (q.preset === quality.name) return;
+    const warning = example.reloadWarning?.();
+    if (warning && !confirm(warning)) {
+      q.preset = quality.name as QualityName;
+      presetBinding.refresh();
+      return;
+    }
     params.set('quality', q.preset);
     location.search = params.toString();
   });
@@ -246,20 +285,21 @@ function addRenderingFolder(
     },
     () => app.setRenderScale(q.renderScale),
   );
-  // WebGPU supports 1 or 4 MSAA samples (no 2× or 8×). FXAA / SMAA are post-process filters on the final image.
+  // WebGPU supports only 1 or 4 MSAA samples. MSAA 4× is the default: SMAA saves little and, with one coverage
+  // sample per pixel, breaks sub-pixel strands into dots; TAA costs ~1 ms more and softens moving hair.
   type AaChoice = 'msaa4' | 'off' | 'fxaa' | 'smaa' | 'taa';
   const aa = { mode: 'msaa4' as AaChoice };
   const cov = { coverage: hairRenderSettings.coverage };
   tip(
     rendering.addBinding(aa, 'mode', {
       label: 'antialiasing',
-      options: {
+      options: alphabetical({
         'MSAA 4×': 'msaa4',
         'off (1×)': 'off',
         'FXAA (post)': 'fxaa',
         'SMAA (post)': 'smaa',
         'TAA (temporal)': 'taa',
-      },
+      }),
     }),
     'MSAA smooths edges while drawing; FXAA / SMAA filter the finished image; TAA blends frames over time.',
   ).on('change', () => {
@@ -287,26 +327,32 @@ function addRenderingFolder(
   tip(
     rendering.addBinding(q, 'toneMapping', {
       label: 'tone mapping',
-      options: {
+      options: alphabetical({
+        Reinhard: THREE.ReinhardToneMapping,
         'AgX (filmic)': THREE.AgXToneMapping,
         'Khronos neutral': THREE.NeutralToneMapping,
         'ACES filmic': THREE.ACESFilmicToneMapping,
-        Reinhard: THREE.ReinhardToneMapping,
         Cineon: THREE.CineonToneMapping,
         'linear (exposure only)': THREE.LinearToneMapping,
         none: THREE.NoToneMapping,
-      },
+      }),
     }),
     'How bright lighting is compressed into screen colors.',
   ).on('change', () => (app.renderer.toneMapping = q.toneMapping as THREE.ToneMapping));
 }
 
 /** Lighting look, environment and the three lamps. */
-function addLightingFolder(gui: Gui, app: App, lights: LightRig, hair: HairSystem): void {
+function addLightingFolder(
+  gui: Gui,
+  app: App,
+  lights: LightRig,
+  hair: HairSystem,
+  initial: LightingName,
+): void {
   const lighting = gui.folder('Lighting', false);
   const lp = lights.params;
   const apply = () => lights.apply();
-  const look = { preset: 'studio' as LightingName };
+  const look = { preset: initial };
   lighting
     .addBinding(look, 'preset', {
       label: 'look',
@@ -358,7 +404,6 @@ function addLightingFolder(gui: Gui, app: App, lights: LightRig, hair: HairSyste
     },
     () => {},
   );
-  // The three lamps, switched with tabs.
   const lamps = lighting.addTab({
     pages: [{ title: 'Key lamp' }, { title: 'Rim lamp' }, { title: 'Fill lamp' }],
   });

@@ -8,6 +8,7 @@ import { hairFrame, hairRenderSettings, type CoverageMode } from './render/HairM
 import {
   HAIR_SHADOW_LAYER,
   HairShadowMap,
+  KeyLightShadowNode,
   OPAQUE_SHADOW_LAYER,
   setReceivedShadow,
 } from './render/HairShadowPass';
@@ -97,6 +98,8 @@ export class HairSystem {
     this.scene = scene;
     this.camera = camera;
     this.lights = lights;
+    // Bodies' hair shadows darken the key light only (the light the hair shadow maps are rendered from).
+    lights.key.shadow.shadowNode = new KeyLightShadowNode(lights.key);
     this.lighting = new HairLighting(scene.environment);
     this.float32Blendable = renderer.hasFeature('float32-blendable');
   }
@@ -180,15 +183,17 @@ export class HairSystem {
       inst.getBoundingSphere(tmpSphere);
       inst.shadowMap.fit(keyDir, tmpSphere.center, tmpSphere.radius);
       // Hair shadows on skin use a lighter density than strand-on-strand self-shadowing (softer, less inky).
-      if (inst.groups[0])
-        inst.bodyShadowDensity.value = inst.groups[0].params.shading.selfShadowDensity * this.bodyShadowScale;
+      const first = inst.groups.find((g) => g.enabled);
+      if (first) inst.bodyShadowDensity.value = first.params.shading.selfShadowDensity * this.bodyShadowScale;
       for (const g of inst.groups) {
-        if (inst.needsReset) g.needsReset = true;
+        if (!g.enabled) continue;
+        // Showing the groomed shape: every frame starts from the rest pose and isn't simulated.
+        if (inst.needsReset || !inst.simulate) g.needsReset = true;
         g.uniforms.firstFrame.value = g.needsReset ? 1 : 0;
         g.uniforms.syncFrame(simDt, time);
         roots.push(g.kernels.roots);
         if (g.needsReset) resets.push(g.kernels.reset);
-        solves.push(g.kernels.solve);
+        if (inst.simulate) solves.push(g.kernels.solve);
         interps.push(g.kernels.interpolate);
         shades.push(g.kernels.shade);
         this.updateLod(inst, g);
@@ -199,23 +204,33 @@ export class HairSystem {
     const r = this.renderer;
     const skip = this.debugSkip;
     for (const inst of this.instances)
-      for (const g of inst.groups) g.mesh.visible = inst.showStrands && !skip.draw;
+      for (const g of inst.groups) {
+        g.mesh.visible = inst.showStrands && g.enabled && !skip.draw;
+        // Hidden hair casts no shadow either (skipping only the draw, to profile, keeps it).
+        g.shadowMesh.visible = inst.showStrands && g.enabled;
+        g.guideLines.visible = inst.showGuides && g.enabled;
+      }
+    // (three.js rejects an empty list: with every group disabled, or none simulating, a stage has nothing to run.)
     void r.compute(deform);
     // Roots run even while paused, so the root frames never go stale and unpausing doesn't jump.
-    void r.compute(roots);
+    if (roots.length) void r.compute(roots);
     if (resets.length) void r.compute(resets);
-    if (simulate && !skip.solve) void r.compute(solves);
+    if (simulate && !skip.solve && solves.length) void r.compute(solves);
     if (hairRenderSettings.coverage === 'temporal') {
       // TAA: save last frame's strand points (before interpolate overwrites them) for motion vectors,
       // and vary the coverage noise.
-      const copies = this.groups.map((g) => g.copyKernel).filter((k): k is N => k !== null);
+      const copies = this.groups
+        .filter((g) => g.enabled)
+        .map((g) => g.copyKernel)
+        .filter((k): k is N => k !== null);
       if (copies.length) void r.compute(copies);
       (hairFrame.value as number) = ((hairFrame.value as number) + 1) % 65536;
     }
-    if (!skip.interpolate) void r.compute(interps);
+    if (!skip.interpolate && interps.length) void r.compute(interps);
     if (!skip.shadows) this.renderShadowMaps();
-    if (!skip.shade) void r.compute(shades);
-    for (const g of this.groups) g.needsReset = false;
+    if (!skip.shade && shades.length) void r.compute(shades);
+    // Disabled groups keep a pending reset for when they're turned back on.
+    for (const g of this.groups) if (g.enabled) g.needsReset = false;
   }
 
   /** Renders each instance's opaque-caster depth and hair front/back depth from the key light. */
@@ -316,6 +331,7 @@ export class HairSystem {
       vertices: 0,
     };
     for (const g of this.groups) {
+      if (!g.enabled) continue;
       s.groups++;
       s.guides += g.ctx.Ng;
       s.guideParticles += g.ctx.Ng * g.ctx.G;
@@ -360,7 +376,7 @@ export class HairSystem {
   /** MSAA coverage technique to return to when TAA is switched off. */
   private msaaCoverage: CoverageMode = hairRenderSettings.coverage;
 
-  /** TAA renders hair with temporal (per-pixel, per-frame) coverage and motion vectors; MSAA restores the previous technique. */
+  /** TAA switches hair to temporal coverage (with motion vectors); off restores the previous MSAA technique. */
   setTemporalAntialiasing(on: boolean): void {
     if (on === (hairRenderSettings.coverage === 'temporal')) return;
     if (on) this.msaaCoverage = hairRenderSettings.coverage;

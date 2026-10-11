@@ -89,7 +89,7 @@ const PRESETS: Record<Exclude<HairColorName, 'brown'>, HairColorPreset> = {
   },
 };
 
-/** Applies a colour look to `shading`; `defaults` is the example's original shading (for 'brown' and relative terms). */
+/** Applies a colour look to `shading`; `defaults` is the example's own shading (for 'brown' and relative terms). */
 export function applyHairColor(shading: ShadingParams, defaults: ShadingParams, name: HairColorName): void {
   if (name === 'brown') {
     const {
@@ -121,6 +121,6 @@ export function applyHairColor(shading: ShadingParams, defaults: ShadingParams, 
   shading.selfShadowDensity = defaults.selfShadowDensity * shadowScale;
 }
 
-/** Dropdown options for Tweakpane ({ label: value }). */
+/** Dropdown options for Tweakpane ({ label: value }), A to Z. */
 export const hairColorOptions = (): Record<string, HairColorName> =>
-  Object.fromEntries(HAIR_COLORS.map((c) => [c, c])) as Record<string, HairColorName>;
+  Object.fromEntries([...HAIR_COLORS].sort().map((c) => [c, c])) as Record<string, HairColorName>;

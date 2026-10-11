@@ -38,7 +38,7 @@ const {
 const PIN = 2;
 
 /**
- * Per guide: root position + smooth frame from the deformed triangle. The old frame moves to slots 3–5
+ * Per guide: root position + smooth frame from the deformed triangle. The previous frame moves to slots 3–5
  * so the solver can interpolate the root across substeps.
  */
 export function buildRootsKernel(ctx: GroupContext): N {
@@ -256,10 +256,16 @@ export function buildSolveKernel(ctx: GroupContext): N {
               xNew.addAssign(F1.n.mul(h.sub(above)));
             });
           });
+          // DFTL velocity correction: the parent gets the opposite of the child's length correction, but not of the
+          // collision push below (that kicks the parent into the collider and makes resting hair jitter).
+          const corr = xNew.sub(xOld).toVar();
+          If(k.greaterThan(pin), () => {
+            prev.element(idx.sub(1)).addAssign(vec4(corr.mul(U.dftlDamping), 0));
+          });
           // Colliders that contain the root are only ignored near the root.
           const maskK = select(profile.element(k).z.lessThan(U.rootColliderRange), mask, uint(0xffffffff));
-          // Guides get many pushes per frame: at most 1.5 cm each, so hair squeezed where skin meets skin (an
-          // arm against the belly) eases out over a few substeps instead of being flung between the surfaces.
+          // Mesh SDF push capped at 1.5 cm per substep, so hair squeezed where skin meets skin (an arm against
+          // the belly) eases out instead of being flung between the surfaces.
           const col = collide(
             colliders,
             u,
@@ -272,11 +278,6 @@ export function buildSolveKernel(ctx: GroupContext): N {
           );
           xNew.assign(parent.add(safeNormalize(col.x.sub(parent), F1.n).mul(L)));
           pos.element(idx).assign(vec4(xNew, 1));
-          // DFTL velocity correction: the parent feels the opposite of the child's correction.
-          const corr = xNew.sub(xOld);
-          If(k.greaterThan(pin), () => {
-            prev.element(idx.sub(1)).addAssign(vec4(corr.mul(U.dftlDamping), 0));
-          });
           // Friction relative to the collider's motion.
           If(dot(col.normal, col.normal).greaterThan(0.5), () => {
             const xp = prev.element(idx).xyz;

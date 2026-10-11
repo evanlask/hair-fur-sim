@@ -16,6 +16,7 @@ export class ColliderDebug {
   private readonly b = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly turn = new THREE.Quaternion();
 
   private readonly colliders: ColliderSet;
 
@@ -46,9 +47,15 @@ export class ColliderDebug {
         entry.len = len;
       }
       entry.mesh.position.copy(this.a).add(this.b).multiplyScalar(0.5);
-      this.dir.copy(this.b).sub(this.a);
-      if (this.dir.lengthSq() > 1e-12)
-        entry.mesh.quaternion.setFromUnitVectors(this.up, this.dir.normalize());
+      // Rotate with the attachment (shortest turn onto the axis in its local frame) so the wireframe doesn't
+      // appear to spin about its axis as the attachment moves.
+      const c = this.colliders.capsules[i];
+      this.dir.copy(c.b).sub(c.a);
+      if (this.dir.lengthSq() > 1e-12) {
+        this.turn.setFromUnitVectors(this.up, this.dir.normalize());
+        if (c.attach) c.attach.getWorldQuaternion(entry.mesh.quaternion).multiply(this.turn);
+        else entry.mesh.quaternion.copy(this.turn);
+      }
     }
   }
 

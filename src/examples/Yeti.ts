@@ -1,7 +1,7 @@
 import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
-import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, alphabetical, num, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { applyHairColor, hairColorOptions, type HairColorName } from '../hair/colorPresets';
 import { mergeHairParams, type HairParamsData, type ShadingParams } from '../hair/params';
@@ -123,7 +123,7 @@ export class YetiExample implements Example {
     lights.update();
 
     const f = gui.folder('Yeti');
-    f.addBinding(this.settings, 'motion', { options: { idle: 'idle', still: 'still' } }).on(
+    f.addBinding(this.settings, 'motion', { options: alphabetical({ idle: 'idle', still: 'still' }) }).on(
       'change',
       () => (this.character.motion = this.settings.motion),
     );
@@ -141,11 +141,13 @@ export class YetiExample implements Example {
     };
     const fur = gui.folder('Fur');
     // The 'brown' preset restores this example's defaults, which for the yeti is its own frost look.
-    const furOptions = Object.fromEntries(
-      Object.entries(hairColorOptions()).map(([label, value]) => [
-        value === 'brown' ? 'frost' : label,
-        value,
-      ]),
+    const furOptions = alphabetical(
+      Object.fromEntries(
+        Object.entries(hairColorOptions()).map(([label, value]) => [
+          value === 'brown' ? 'frost' : label,
+          value,
+        ]),
+      ),
     );
     fur
       .addBinding(this.settings, 'furColor', { label: 'fur color', options: furOptions })
@@ -260,6 +262,6 @@ export class YetiExample implements Example {
   }
 
   hud(): string[] {
-    return [`yeti   ${this.settings.motion}`];
+    return [`motion ${this.settings.motion}`];
   }
 }

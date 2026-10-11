@@ -3,7 +3,7 @@ import * as THREE from 'three/webgpu';
 /**
  * Projects an equirectangular HDR environment onto 2nd-order spherical harmonics (9 RGB coeffs).
  * Returns coefficients already convolved for irradiance (Ramamoorthi & Hanrahan) and divided by
- * π, so `evaluate(n)` gives the cosine-convolved radiance (diffuse "irradiance / π").
+ * π, so HairLighting.envDiffuse(n) gives irradiance / π (cosine-convolved radiance).
  */
 export function equirectToIrradianceSH(texture: THREE.Texture): THREE.Vector3[] {
   const image = texture.image as { data: ArrayLike<number>; width: number; height: number };

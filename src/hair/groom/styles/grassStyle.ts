@@ -54,7 +54,7 @@ const smoothstep = (a: number, b: number, x: number) => {
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /**
- * Prairie grass on flat ground (y up): a dense understory of tufted blades in two layered groups with
+ * Prairie grass on flat ground (y up), in two layered groups: a dense understory of tufted blades and
  * sparser, taller seed stalks standing in drifts. Bare patches, tuft structure, lengths and dryness all come
  * from position noise, so the groom is deterministic.
  */
@@ -69,8 +69,7 @@ export function createGrassStyle(p: GrassStyleParams): GroomStyle {
   };
   const s = p.seed;
 
-  // A bump in the drift noise around a point near the middle, so there is (almost) always a drift in view there
-  // instead of one only on the far edges. Without it about half the seeds leave the middle bare; with it, ~7%.
+  // A bump in the drift noise near the middle, so most seeds put a drift in view rather than only at the far edges.
   const bumpAngle = hash2(1, 2, s) * Math.PI * 2;
   const bumpOffset = Math.sqrt(hash2(3, 4, s)) * 0.8;
   const bumpX = Math.cos(bumpAngle) * bumpOffset;

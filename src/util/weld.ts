@@ -8,17 +8,8 @@ export function weldedNormals(
   quantum = 1e-5,
 ): Float32Array {
   const n = positions.length / 3;
-  const key = (i: number) =>
-    `${Math.round(positions[i * 3] / quantum)},${Math.round(positions[i * 3 + 1] / quantum)},${Math.round(positions[i * 3 + 2] / quantum)}`;
-  const groupOf = new Int32Array(n);
-  const groups = new Map<string, number>();
-  for (let i = 0; i < n; i++) {
-    const k = key(i);
-    let g = groups.get(k);
-    if (g === undefined) groups.set(k, (g = groups.size));
-    groupOf[i] = g;
-  }
-  const acc = new Float32Array(groups.size * 3);
+  const { groupOf, count } = weldGroups(positions, quantum);
+  const acc = new Float32Array(count * 3);
   for (let t = 0; t < indices.length; t += 3) {
     const a = indices[t];
     const b = indices[t + 1];
@@ -52,4 +43,20 @@ export function weldedNormals(
     out[i * 3 + 2] = z / l;
   }
   return out;
+}
+
+/** Groups vertices at the same position (within `quantum`): `groupOf[i]` numbers them 0…count−1 in first-seen order. */
+export function weldGroups(positions: Float32Array, quantum = 1e-5): { groupOf: Int32Array; count: number } {
+  const n = positions.length / 3;
+  const key = (i: number) =>
+    `${Math.round(positions[i * 3] / quantum)},${Math.round(positions[i * 3 + 1] / quantum)},${Math.round(positions[i * 3 + 2] / quantum)}`;
+  const groupOf = new Int32Array(n);
+  const groups = new Map<string, number>();
+  for (let i = 0; i < n; i++) {
+    const k = key(i);
+    let g = groups.get(k);
+    if (g === undefined) groups.set(k, (g = groups.size));
+    groupOf[i] = g;
+  }
+  return { groupOf, count: groups.size };
 }

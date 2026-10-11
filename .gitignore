@@ -36,3 +36,6 @@ coverage
 
 # macOS
 .DS_Store
+
+# Original (uncompressed) copies of public/ assets, kept for editing
+assets-original/

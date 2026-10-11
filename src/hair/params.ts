@@ -102,8 +102,9 @@ export interface StyleParams {
   /** Skip strands whose root is outside the camera view (padded by the strand length, so their shadows stay). */
   cullOffscreen: boolean;
   /**
-   * Beyond this camera distance (m) strands thin out as 1/distance², widening the rest so the coverage stays
-   * the same (0 = off). Per strand, unlike the whole-groom LOD above, so it suits grooms spanning many depths.
+   * Beyond this camera distance (m) strands thin out as (lodDistance / distance)^1.5, widening the rest so the
+   * coverage stays about the same (0 = off). Per strand, unlike the whole-groom LOD above, so it suits grooms
+   * spanning many depths.
    */
   lodDistance: number;
   /**
@@ -295,10 +296,7 @@ export const hairWind = new SharedWind();
 export class HairUniforms {
   // timing
   readonly dtSub = uniform(1 / 240);
-  /**
-   * Time-corrected Verlet ratio for the first substep, read by the solver. Always 1 because substeps have a fixed
-   * length (see syncFrame), so it currently has no effect.
-   */
+  /** Time-corrected Verlet ratio for the first substep; always 1 since substeps have a fixed length (see syncFrame). */
   readonly dtRatio = uniform(1);
   readonly substeps = uniform(4, 'uint');
   /** Exponent dt_sub / DT_REF used to make stiffness timestep-independent. */

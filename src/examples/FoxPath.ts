@@ -21,14 +21,12 @@ interface Wave {
 }
 
 /**
- * A wobbly closed loop the foxes walk: a circle whose radius varies with angle (a few smooth harmonics that
- * slowly drift). Each direction from the centre meets the loop once, so it never crosses itself.
+ * A wobbly closed loop the foxes walk: a circle whose radius varies with angle (a few smooth, slowly drifting
+ * harmonics). Each direction from the centre meets the loop once, so it never crosses itself.
  *
- * Fox 0 and fox 1 start on opposite sides; their angles drift ahead of and behind that by a slow, bounded wave,
- * so each speeds up and slows down a little and now and then one closes up behind the other. Their angle apart
- * stays within π ± maxStagger(), the most that keeps them MIN_SEPARATION apart on the loop's smallest radius
- * r_min = radius·(1 − wiggle·MAX_WOBBLE) (on a loop too small for that, they stay opposite, 2·r_min apart), so
- * they never touch or pass each other.
+ * Fox 0 and fox 1 start on opposite sides and drift ahead of and behind that by a slow, bounded wave. Their angle
+ * apart stays within π ± maxStagger(), which keeps them at least MIN_SEPARATION apart (or opposite, if the loop is
+ * too small for that), so they never touch or pass each other.
  */
 export class FoxPath {
   readonly center = new THREE.Vector3();

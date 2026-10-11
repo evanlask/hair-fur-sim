@@ -65,6 +65,56 @@ body {
   background: var(--accent);
 }
 
+/* Wayne's party button under the examples menu (src/examples/Mullet.ts): bright and pulsing until pressed. */
+#party {
+  position: fixed;
+  top: 58px;
+  left: 12px;
+  z-index: 10;
+}
+
+#party button {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #ff3d8b, #ff9f1c);
+  border: 0;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  animation: party-glow 1.4s ease-in-out infinite alternate;
+}
+
+#party button:hover {
+  filter: brightness(1.12);
+}
+
+@keyframes party-glow {
+  from {
+    box-shadow: 0 0 6px rgba(255, 61, 139, 0.35);
+  }
+  to {
+    box-shadow: 0 0 18px rgba(255, 159, 28, 0.65);
+  }
+}
+
+#party button.active {
+  color: #ffc2dc;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px #ff3d8b;
+  text-shadow: none;
+  animation: none;
+  backdrop-filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #party button {
+    animation: none;
+    box-shadow: 0 0 12px rgba(255, 80, 140, 0.5);
+  }
+}
+
 #hud {
   position: fixed;
   left: 12px;
@@ -81,6 +131,13 @@ body {
   white-space: pre;
   pointer-events: none;
   z-index: 10;
+}
+
+/* Under the Groom Studio's panel: as wide as the panel (its lines are kept short enough). */
+#hud.docked {
+  box-sizing: border-box;
+  width: 264px;
+  overflow: hidden;
 }
 
 #hud b {
@@ -211,4 +268,550 @@ body {
 
 #status .help li {
   margin-bottom: 6px;
+}
+
+/* Groom Studio's left panel (src/examples/studio/StudioPanel.ts). Spacing steps: 4 px within a row, 6 px between
+   rows, 12 px between sections. */
+#studio {
+  position: fixed;
+  top: 56px;
+  /* Down to the performance meter (StudioPanel keeps this in step with its height). */
+  bottom: 150px;
+  left: 12px;
+  box-sizing: border-box;
+  width: 264px;
+  overflow: hidden auto;
+  padding: 10px 12px 12px;
+  background: var(--panel);
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  z-index: 10;
+  font-size: 12px;
+  line-height: 1.3;
+  user-select: none;
+}
+
+#studio * {
+  box-sizing: border-box;
+}
+
+#studio section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+#studio section > h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#studio section > h3::after {
+  content: ' ▾';
+  opacity: 0.6;
+}
+
+#studio section.collapsed > h3 {
+  margin-bottom: 0;
+}
+
+#studio section.collapsed > h3::after {
+  content: ' ▸';
+}
+
+#studio section.collapsed > :not(h3),
+#studio section[hidden],
+#studio [hidden] {
+  display: none !important;
+}
+
+/* The Advanced section's groups (studioGui.ts): collapsible like sections, one step smaller. */
+#studio .group + .group {
+  margin-top: 4px;
+}
+
+#studio .group > h4 {
+  margin: 0;
+  padding: 4px 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+#studio .group > h4::before {
+  content: '▾ ';
+  color: var(--muted);
+}
+
+#studio .group.collapsed > h4::before {
+  content: '▸ ';
+}
+
+#studio .group.collapsed > :not(h4) {
+  display: none !important;
+}
+
+#studio .group {
+  padding-left: 2px;
+}
+
+#studio .group .gap {
+  height: 6px;
+}
+
+#studio .group .subhead {
+  margin: 6px 0 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The Advanced section's labels are longer than the Layer section's. */
+#studio .advanced label.slider .name {
+  width: 96px;
+}
+
+#studio .advanced > .row {
+  margin-top: 8px;
+}
+
+#studio button,
+#studio select {
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#studio select {
+  padding: 0 4px;
+  text-overflow: ellipsis;
+}
+
+#studio button:hover:not(:disabled),
+#studio select:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#studio button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#studio .row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+#studio .row + .row,
+#studio .row + label,
+#studio label + .row,
+#studio .layer-list + .row,
+#studio .hint + .row,
+#studio .swatches + .row {
+  margin-top: 6px;
+}
+
+#studio .row .spacer {
+  flex: 1;
+}
+
+#studio .row .grow {
+  flex: 1 1 0;
+}
+
+#studio .row.views button {
+  flex: 1 1 0;
+  padding: 0;
+}
+
+#studio .row.actions button {
+  flex: 1 1 auto;
+}
+
+#studio .status {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#studio .status.warn {
+  color: #ff9a76;
+}
+
+#studio .hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#studio .tool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+#studio .tool-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 38px;
+  padding: 0 2px;
+}
+
+#studio .tool-grid button.active {
+  color: #111;
+  background: var(--accent);
+}
+
+/* Navigate, on a row of its own above the paint tools. */
+#studio .tool-grid button.wide {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  gap: 6px;
+  height: 28px;
+}
+
+#studio kbd {
+  font:
+    9px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  opacity: 0.6;
+}
+
+#studio label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 22px;
+}
+
+#studio label + label {
+  margin-top: 2px;
+}
+
+#studio label.slider .name {
+  flex: none;
+  width: 82px;
+  overflow: hidden;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#studio label.slider input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+#studio label.slider output {
+  flex: none;
+  width: 56px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  cursor: text;
+}
+
+/* Typing a slider's value (see rangeRow): in the value's place. */
+#studio label.slider input.value-edit {
+  flex: none;
+  box-sizing: border-box;
+  width: 56px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#studio label.check {
+  color: var(--muted);
+}
+
+#studio .row label.check {
+  flex: 1 1 0;
+}
+
+/* Physics: its own width, so "pause while painting" stays on one line. */
+#studio .row.sim label.check:first-child {
+  flex: none;
+  margin-right: 12px;
+}
+
+#studio label.check input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+#studio .legend {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+#studio .legend .bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ramp);
+}
+
+#studio .readout {
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+#studio .readout:empty {
+  display: none;
+}
+
+#studio .layer-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#studio .layer-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#studio .layer-list li:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#studio .layer-list li.active {
+  background: rgba(240, 179, 90, 0.18);
+}
+
+#studio .layer-list li.hidden .name {
+  opacity: 0.45;
+}
+
+/* Dragging a layer up or down the list: a line where it will go. */
+#studio .layer-list li.dragging {
+  opacity: 0.4;
+}
+
+#studio .layer-list li.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+#studio .layer-list li.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+#studio .layer-list .icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  color: var(--text);
+}
+
+#studio .layer-list .icon.off {
+  opacity: 0.3;
+}
+
+#studio .layer-list .icon.on {
+  color: var(--accent);
+}
+
+#studio .layer-list .swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 4px;
+  border-radius: 3px;
+}
+
+#studio .layer-list .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#studio .layer-list .meta {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+#studio input.name {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+#studio input.name:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+#studio input.color {
+  flex: none;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+#studio .row.colors .name {
+  color: var(--muted);
+}
+
+#studio .row.colors .name + input.color {
+  margin-right: 8px;
+}
+
+#studio .swatches {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+#studio .swatches .swatch {
+  flex: 1 1 0;
+  height: 18px;
+  padding: 0;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+#studio .swatches .swatch.active {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 0 0 2px var(--accent);
+}
+
+#studio .sliders {
+  margin-top: 6px;
+}
+
+/* The studio's own Help (GroomStudio.ts HELP). */
+#status .box:has(.studio-help) {
+  max-width: 900px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+#status .studio-help {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+#status .studio-help p {
+  margin: 0 0 12px;
+}
+
+#status .studio-help .cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px 28px;
+}
+
+#status .studio-help h3 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#status .studio-help table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+#status .studio-help td {
+  padding: 2px 8px 2px 0;
+  vertical-align: top;
+}
+
+#status .studio-help td:first-child {
+  white-space: nowrap;
+}
+
+#status .studio-help kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 4px;
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+#status .studio-help .start {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+#status .studio-help .start li + li {
+  margin-top: 3px;
+}
+
+#status .studio-help .tips {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
 }

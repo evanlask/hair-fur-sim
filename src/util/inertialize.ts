@@ -12,7 +12,7 @@ export class Inertializer {
   private readonly damping: number;
   private initialized = false;
 
-  /** `halflife` (s): time for the offset to halve (it's ~97% gone after five halflives). */
+  /** `halflife` (s): how fast the offset decays (spring halflife; it's nearly gone after five). */
   constructor(channels: number, halflife = 0.12) {
     this.value = new Float64Array(channels);
     this.velocity = new Float64Array(channels);

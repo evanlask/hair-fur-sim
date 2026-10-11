@@ -220,16 +220,39 @@ export class HairShadowMap {
 
 let receiverVersion = 0;
 
+/** A body material with a hair-shadow callback (see setReceivedShadow). */
+type HairShadowReceiver = THREE.NodeMaterial & { hairShadow?: (shadow: N) => N; hairShadowKey?: string };
+
 /**
- * Sets a material's received-shadow callback and forces a pipeline rebuild. three.js keys pipelines on
- * String(value) for function-valued properties and every TSL Fn stringifies the same, so swapping the
- * callback alone (e.g. after a regroom created new shadow maps) would keep sampling the old maps.
+ * Sets a material's hair-shadow callback, applied to its key-light shadow (see KeyLightShadowNode), and forces a
+ * pipeline rebuild. three.js keys pipelines on String(value) for function-valued properties and every TSL Fn
+ * stringifies the same, so swapping the callback alone (e.g. after a regroom created new shadow maps) would keep
+ * sampling the old maps.
  */
 export function setReceivedShadow(material: THREE.NodeMaterial, fn: N): void {
-  material.receivedShadowNode = fn;
-  (material as THREE.NodeMaterial & { hairShadowKey?: string }).hairShadowKey =
-    `hair-shadow-${++receiverVersion}`;
+  const m = material as HairShadowReceiver;
+  m.hairShadow = fn;
+  m.hairShadowKey = `hair-shadow-${++receiverVersion}`;
   material.needsUpdate = true;
+}
+
+/**
+ * The key light's shadow: three's, times the hair transmittance of the material being lit (its setReceivedShadow
+ * callback). The hair shadow maps are rendered from the key light only; three's own hook for this,
+ * material.receivedShadowNode, applies to every shadowed lamp.
+ */
+export class KeyLightShadowNode extends THREE.Node {
+  private readonly shadow: THREE.ShadowNode;
+
+  constructor(light: THREE.DirectionalLight) {
+    super('float');
+    this.shadow = new THREE.ShadowNode(light, light.shadow);
+  }
+
+  setup(builder: THREE.NodeBuilder): N {
+    const hair = (builder.material as HairShadowReceiver).hairShadow;
+    return hair ? hair(this.shadow as N) : (this.shadow as N);
+  }
 }
 
 /** Material helper: multiply a body material's received (key-light) shadow by hair transmittance. */

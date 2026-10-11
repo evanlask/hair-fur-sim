@@ -3,11 +3,10 @@ import * as THREE from 'three/webgpu';
 import type { GroomStyle, SurfacePoint } from '../types';
 
 /** Lee Perry-Smith model-space landmarks (model units; 1 unit ≈ 5.3 cm). */
-const LPS = {
+export const LPS = {
   craniumCenter: new THREE.Vector3(-0.073, 2.159, 0.079),
   midlineX: -0.08,
-  // Ear ellipsoids (center, radii), tight around the ear itself (it protrudes over z ≈ −0.25…0.3 and
-  // reaches y ≈ 1.95 at its top front), so hair grows right down to the top of the ear but never out of it.
+  // Ear ellipsoids (center, radii), tight around the ears so hair grows down to them but never out of them.
   ears: [
     { c: new THREE.Vector3(-1.8, 1.36, -0.03), r: new THREE.Vector3(0.36, 0.74, 0.46) },
     { c: new THREE.Vector3(1.64, 1.36, -0.03), r: new THREE.Vector3(0.36, 0.74, 0.46) },
@@ -61,7 +60,7 @@ export const defaultMulletStyle = (): Omit<MulletStyleParams, 'modelScale' | 'mo
 });
 
 /** Hairline height (model y) by azimuth |θ| in degrees (0 = front, 180 = back). */
-const HAIRLINE: [number, number][] = [
+export const HAIRLINE: [number, number][] = [
   [0, 3.3],
   [25, 3.05],
   [45, 2.45],
@@ -75,7 +74,7 @@ const HAIRLINE: [number, number][] = [
   [180, -0.45],
 ];
 
-function lerpTable(table: [number, number][], x: number): number {
+export function lerpTable(table: [number, number][], x: number): number {
   if (x <= table[0][0]) return table[0][1];
   for (let i = 1; i < table.length; i++) {
     if (x <= table[i][0]) {

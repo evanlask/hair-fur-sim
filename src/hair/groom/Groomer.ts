@@ -27,6 +27,8 @@ export interface GroomOptions {
   guideScale?: number;
   /** Fraction of the strand where root-containing colliders are ignored (matches the solver). */
   rootColliderRange?: number;
+  /** Keep each group's guide roots (`GroomGroupData.guideRoots`), so `reshapeGroomGroup` can regrow them. */
+  keepRoots?: boolean;
 }
 
 const ROOT_OFFSET = 0.0002;
@@ -34,20 +36,24 @@ const ROOT_OFFSET = 0.0002;
 /** Builds guide + render strand data for every group of a style. */
 export function buildGroom(mesh: GrowthMesh, style: GroomStyle, opts: GroomOptions = {}): GroomData {
   const sampler = new SurfaceSampler(mesh);
-  const groups: GroomGroupData[] = [];
+  const groups = style.groups.map((spec, gi) => buildGroomGroup(mesh, sampler, style, spec, gi, opts));
+  return { groups, ...groomBounds(groups) };
+}
+
+/** Bounding sphere of the bind-pose guides, padded by a quarter of the max length for motion. */
+export function groomBounds(groups: GroomGroupData[]): { boundsCenter: THREE.Vector3; boundsRadius: number } {
   const bounds = new THREE.Box3();
+  const p = new THREE.Vector3();
   let maxLen = 0;
-  style.groups.forEach((spec, gi) => {
-    const data = buildGroup(mesh, sampler, style, spec, gi, opts);
-    groups.push(data);
+  for (const data of groups) {
     maxLen = Math.max(maxLen, data.maxLength);
     const w = data.guides.initWorld;
     for (let i = 0; i < data.guides.count * data.guides.particles; i++) {
-      bounds.expandByPoint(new THREE.Vector3(w[i * 4], w[i * 4 + 1], w[i * 4 + 2]));
+      bounds.expandByPoint(p.set(w[i * 4], w[i * 4 + 1], w[i * 4 + 2]));
     }
-  });
+  }
   const sphere = bounds.isEmpty() ? new THREE.Sphere() : bounds.getBoundingSphere(new THREE.Sphere());
-  return { groups, boundsCenter: sphere.center, boundsRadius: sphere.radius + maxLen * 0.25 };
+  return { boundsCenter: sphere.center, boundsRadius: sphere.radius + maxLen * 0.25 };
 }
 
 function triangleWeightFn(
@@ -82,7 +88,11 @@ function accept(style: GroomStyle, group: number, sp: SurfacePoint, rng: Rng): b
   return d > 0 && rng.next() < d;
 }
 
-function buildGroup(
+/**
+ * Builds one group of a style (`group` is its index). The sampler is reweighted for the group, so one can be shared
+ * by every group of a mesh. Exported for grooms that regrow single groups (the studio's layers).
+ */
+export function buildGroomGroup(
   mesh: GrowthMesh,
   sampler: SurfaceSampler,
   style: GroomStyle,
@@ -91,7 +101,7 @@ function buildGroup(
   opts: GroomOptions,
 ): GroomGroupData {
   // Separate deterministic stream per group, so editing one group doesn't reshuffle the others.
-  const rng = new Rng((opts.seed ?? 1) * 7919 + group * 104729);
+  const rng = new Rng((opts.seed ?? 1) * 7919 + (spec.seed ?? group) * 104729);
   sampler.setWeights(triangleWeightFn(sampler, style, group));
   const area = sampler.totalWeightedArea;
   const guideTarget = Math.max(1, Math.round(spec.guideCount * (opts.guideScale ?? 1)));
@@ -113,7 +123,9 @@ function buildGroup(
     guideHash.insert(sp.position.x, sp.position.y, sp.position.z);
     guidePoints.push(copySurfacePoint(sp, createSurfacePoint()));
   }
-  const guides = buildGuides(mesh, style, spec, group, guidePoints, opts, rng);
+  // The guides' random draws are recorded (same stream, same numbers) so a reshape can replay them.
+  const recorder = opts.keepRoots ? new RecordingRng(rng) : null;
+  const guides = buildGuides(mesh, style, spec, group, guidePoints, opts, recorder ?? rng);
 
   // Render strands: random roots bound to the 3 nearest guides of the group.
   const strands = bindStrands(
@@ -131,7 +143,104 @@ function buildGroup(
 
   let maxLength = 0;
   for (let g = 0; g < guides.count; g++) maxLength = Math.max(maxLength, guides.rootBary[g * 4 + 3]);
-  return { spec, guides, strands, maxLength };
+  const data: GroomGroupData = { spec, guides, strands, maxLength };
+  if (recorder) {
+    data.guideRoots = guidePoints;
+    data.guideDraws = Float64Array.from(recorder.draws);
+  }
+  return data;
+}
+
+/** Passes another stream's numbers through, recording them. */
+class RecordingRng extends Rng {
+  readonly draws: number[] = [];
+  private readonly source: Rng;
+
+  constructor(source: Rng) {
+    super();
+    this.source = source;
+  }
+
+  override next(): number {
+    const x = this.source.next();
+    this.draws.push(x);
+    return x;
+  }
+}
+
+/** Replays recorded numbers in order. */
+class ReplayRng extends Rng {
+  private readonly draws: ArrayLike<number>;
+  private i = 0;
+
+  constructor(draws: ArrayLike<number>) {
+    super();
+    this.draws = draws;
+  }
+
+  override next(): number {
+    return this.draws[this.i++] ?? 0;
+  }
+}
+
+/**
+ * Regrows a group's guides from the style in place, at the roots of a build made with `keepRoots`: rest pose,
+ * length and collider mask per guide, then the lengths of the strands bound to guides whose length changed (each
+ * keeps its random shortening). Roots, counts and strand bindings stay, so only the guide buffers, and the strand
+ * data if lengths changed, need uploading again. With the style unchanged this reproduces the build exactly.
+ * `subset` limits it to some guides (those near a brush). Returns whether any guide length changed.
+ */
+export function reshapeGroomGroup(
+  mesh: GrowthMesh,
+  style: GroomStyle,
+  data: GroomGroupData,
+  group: number,
+  opts: GroomOptions = {},
+  subset?: ArrayLike<number>,
+): boolean {
+  const { guideRoots: roots, guideDraws: draws, guides: g } = data;
+  if (!roots || !draws) throw new Error('reshapeGroomGroup needs a groom built with keepRoots');
+  const G = g.particles;
+  const ids = subset ? Array.from(subset) : Array.from({ length: g.count }, (_, i) => i);
+  const fresh = buildGuides(
+    mesh,
+    style,
+    data.spec,
+    group,
+    ids.map((i) => roots[i]),
+    opts,
+    new ReplayRng(ids.map((i) => draws[i])),
+  );
+  const oldLength = new Float32Array(g.count);
+  for (let i = 0; i < g.count; i++) oldLength[i] = g.rootBary[i * 4 + 3];
+  const changed = new Uint8Array(g.count);
+  let lengthsChanged = false;
+  ids.forEach((i, k) => {
+    if (fresh.rootBary[k * 4 + 3] !== g.rootBary[i * 4 + 3]) changed[i] = 1;
+    lengthsChanged ||= changed[i] === 1;
+    g.rootTri.set(fresh.rootTri.subarray(k * 4, k * 4 + 4), i * 4);
+    g.rootBary.set(fresh.rootBary.subarray(k * 4, k * 4 + 4), i * 4);
+    g.rest.set(fresh.rest.subarray(k * G * 4, (k + 1) * G * 4), i * G * 4);
+    g.initWorld.set(fresh.initWorld.subarray(k * G * 4, (k + 1) * G * 4), i * G * 4);
+  });
+  if (lengthsChanged) {
+    const { guides: sg, weights: w } = data.strands;
+    for (let s = 0; s < data.strands.count; s++) {
+      const o = s * 4;
+      if (!changed[sg[o]] && !changed[sg[o + 1]] && !changed[sg[o + 2]]) continue;
+      const before =
+        w[o] * oldLength[sg[o]] + w[o + 1] * oldLength[sg[o + 1]] + w[o + 2] * oldLength[sg[o + 2]];
+      const after =
+        w[o] * g.rootBary[sg[o] * 4 + 3] +
+        w[o + 1] * g.rootBary[sg[o + 1] * 4 + 3] +
+        w[o + 2] * g.rootBary[sg[o + 2] * 4 + 3];
+      w[o + 3] = before > 0 ? (w[o + 3] * after) / before : after;
+    }
+  }
+  let maxLength = 0;
+  for (let i = 0; i < g.count; i++) maxLength = Math.max(maxLength, g.rootBary[i * 4 + 3]);
+  data.maxLength = maxLength;
+  return lengthsChanged;
 }
 
 const tmp = {
@@ -217,7 +326,10 @@ function buildGuides(
     shape.waveAmplitude = 0;
     shape.waveCount = 0;
     shape.bendTarget.set(0, -1, 0);
+    shape.steer = null;
     style.shape(p, shape, group);
+    // (Read back: the style may have set it.)
+    const steer = shape.steer as GuideShape['steer'];
     const L = Math.max(shape.length, 1e-4);
     const h = L / (G - 1);
 
@@ -241,6 +353,7 @@ function buildGuides(
     for (let k = 1; k < G; k++) {
       const bend = 1 - Math.exp(-shape.bendRate * h);
       target.copy(shape.bendTarget);
+      steer?.(xs[k - 1], target);
       dir.lerp(target, bend).normalize();
       const next = xs[k].copy(xs[k - 1]).addScaledVector(dir, h);
       if (shape.waveAmplitude > 0) {
@@ -319,9 +432,12 @@ function bindStrands(
   const nearId = [0, 0, 0];
   const nearD2 = [0, 0, 0];
   let nCand = 0;
+  /** The style's test of which guides this root may follow (see GroomStyle.bindFilter). */
+  let follows: ((guide: SurfacePoint) => boolean) | null = null;
   const visit = (id: number, d2: number) => {
     // The normal test skips guides on the far side of thin features (the other face of an ear).
     if (guidePoints[id].normal.dot(sp.normal) <= 0.1) return;
+    if (follows && !follows(guidePoints[id])) return;
     nCand++;
     let k = Math.min(nCand, 3) - 1;
     if (nCand > 3 && d2 >= nearD2[2]) return;
@@ -340,6 +456,7 @@ function bindStrands(
   while (N < target && attempts < target * 40) {
     attempts++;
     if (!sampler.sample(rng, sp) || !accept(style, group, sp, rng)) continue;
+    follows = style.bindFilter?.(sp, group) ?? null;
     // Widen the search until there are 3 candidates.
     nCand = 0;
     for (let ring = 1; ring <= 4 && nCand < 3; ring++) {

@@ -41,7 +41,10 @@ export const defaultLightParams = (): LightParams => ({
   shadowMapSize: 2048,
 });
 
-/** Studio three-point rig. The key light casts (opaque) shadows; rim light sells hair translucency. */
+/**
+ * Studio three-point rig; rim light sells hair translucency. Every lamp casts opaque shadows (the rim and fill at half
+ * the key's resolution); only the key light's shadow on bodies includes the hair's (see KeyLightShadowNode).
+ */
 export class LightRig {
   readonly key = new THREE.DirectionalLight();
   readonly rim = new THREE.DirectionalLight();
@@ -63,9 +66,11 @@ export class LightRig {
     this.key.name = 'key';
     this.rim.name = 'rim';
     this.fill.name = 'fill';
-    this.key.castShadow = true;
-    this.key.shadow.normalBias = 0;
-    this.key.shadow.radius = 2;
+    for (const l of [this.key, this.rim, this.fill]) {
+      l.castShadow = true;
+      l.shadow.normalBias = 0;
+      l.shadow.radius = 2;
+    }
     this.apply();
   }
 
@@ -79,16 +84,20 @@ export class LightRig {
     this.fill.intensity = p.fillIntensity;
     this.scene.environmentIntensity = p.envIntensity;
     this.renderer.toneMappingExposure = p.exposure;
-    if (this.key.shadow.mapSize.x !== p.shadowMapSize) {
-      this.key.shadow.mapSize.set(p.shadowMapSize, p.shadowMapSize);
+    const size = (l: THREE.DirectionalLight, s: number) => {
+      if (l.shadow.mapSize.x === s) return;
+      l.shadow.mapSize.set(s, s);
       // three.js allocates the shadow map once; clearing it makes the next render recreate it at the new size.
-      this.key.shadow.map?.dispose();
-      this.key.shadow.map = null as unknown as THREE.RenderTarget;
-    }
+      l.shadow.map?.dispose();
+      l.shadow.map = null as unknown as THREE.RenderTarget;
+    };
+    size(this.key, p.shadowMapSize);
+    size(this.rim, Math.max(512, p.shadowMapSize / 2));
+    size(this.fill, Math.max(512, p.shadowMapSize / 2));
     this.update();
   }
 
-  /** Re-aims lights at the focus and fits the key light's shadow frustum. */
+  /** Re-aims lights at the focus and fits their shadow frustums. */
   update(): void {
     const p = this.params;
     const d = new THREE.Vector3();
@@ -103,7 +112,14 @@ export class LightRig {
     place(this.key, p.keyAzimuth, p.keyElevation);
     place(this.rim, p.rimAzimuth, p.rimElevation);
     place(this.fill, p.fillAzimuth, p.fillElevation);
-    const cam = this.key.shadow.camera as THREE.OrthographicCamera;
+    this.fitShadow(this.key, p.keyElevation, dist);
+    this.fitShadow(this.rim, p.rimElevation, dist);
+    this.fitShadow(this.fill, p.fillElevation, dist);
+  }
+
+  /** Fits a lamp's shadow frustum round the focus, `dist` away at `elevation` (degrees). */
+  private fitShadow(l: THREE.DirectionalLight, elevation: number, dist: number): void {
+    const cam = l.shadow.camera as THREE.OrthographicCamera;
     const r = this.focusRadius;
     cam.left = -r;
     cam.right = r;
@@ -112,11 +128,11 @@ export class LightRig {
     cam.near = Math.max(0.01, dist - r * 2);
     // Reach far enough to cover the floor (y = 0) under the whole frustum, or shadows cast onto it
     // from above the focus fall past the far plane. Capped for grazing lights (floor radius is 12).
-    const sinEl = Math.max(Math.sin(THREE.MathUtils.degToRad(p.keyElevation)), 0.05);
+    const sinEl = Math.max(Math.sin(THREE.MathUtils.degToRad(elevation)), 0.05);
     const toFloor = Math.min((Math.max(this.focus.y, 0) + r) / sinEl, 12);
     cam.far = dist + Math.max(r * 2, toFloor);
     // Bias is in normalized depth; rescale so it stays the same world distance as the depth range grows.
-    this.key.shadow.bias = (-0.0004 * (r * 4)) / (cam.far - cam.near);
+    l.shadow.bias = (-0.0004 * (r * 4)) / (cam.far - cam.near);
     cam.updateProjectionMatrix();
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test';
 
-import { fbm2, hash2, valueNoise2, worley2 } from './noise';
+import { fbm2, hash2, hash3, valueNoise2, valueNoise3, worley2 } from './noise';
 
 describe('noise', () => {
   it('is deterministic and stays in [0, 1)', () => {
@@ -21,6 +21,23 @@ describe('noise', () => {
       const x = i * 0.31;
       expect(Math.abs(valueNoise2(x, 0.5) - valueNoise2(x + 1e-4, 0.5))).toBeLessThan(1e-2);
     }
+  });
+
+  it('3D value noise is deterministic, in [0, 1), continuous and different per seed', () => {
+    let differ = 0;
+    for (let i = 0; i < 300; i++) {
+      const x = (i * 0.737) % 13;
+      const y = (i * 0.291) % 5;
+      const z = (i * 1.913) % 7;
+      for (const f of [hash3(i, i * 3, i * 7, 2), valueNoise3(x, y, z, 4)]) {
+        expect(f).toBeGreaterThanOrEqual(0);
+        expect(f).toBeLessThan(1);
+      }
+      expect(valueNoise3(x, y, z, 4)).toBe(valueNoise3(x, y, z, 4));
+      expect(Math.abs(valueNoise3(x, y, z, 4) - valueNoise3(x + 1e-4, y, z - 1e-4, 4))).toBeLessThan(1e-2);
+      if (Math.abs(valueNoise3(x, y, z, 4) - valueNoise3(x, y, z, 5)) > 0.05) differ++;
+    }
+    expect(differ).toBeGreaterThan(200);
   });
 
   it('worley returns the nearest jittered cell centre', () => {

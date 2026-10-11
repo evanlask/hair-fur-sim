@@ -41,6 +41,12 @@ export interface GuideShape {
   /** Guide-level wave amplitude (m) and number of waves along the strand. */
   waveAmplitude: number;
   waveCount: number;
+  /**
+   * Optional: aims each growth step. Called with the last particle (world) and the step's target direction
+   * (bendTarget), which it may replace (unit, world); e.g. to keep hair gathered at a tie on the skin until it gets
+   * there. Null for most hair.
+   */
+  steer?: ((position: THREE.Vector3, target: THREE.Vector3) => void) | null;
 }
 
 export interface GroomGroupSpec {
@@ -57,6 +63,11 @@ export interface GroomGroupSpec {
   widthVariation: number;
   /** 'root' blends guide offsets in root frames (fur on thin limbs), 'world' for long hair. */
   interpSpace: 'world' | 'root';
+  /**
+   * Seed for this group's random stream instead of its position in the style, so a groom that adds, removes or
+   * reorders groups (the studio's layers) doesn't reshuffle the others.
+   */
+  seed?: number;
 }
 
 export interface GroomStyle {
@@ -68,6 +79,12 @@ export interface GroomStyle {
   shape(p: SurfacePoint, out: GuideShape, group: number): void;
   /** Optional baked per-strand color (linear RGB 0..1). */
   color?(p: SurfacePoint, group: number): [number, number, number] | null;
+  /**
+   * Optional: which guides a render strand rooted at `root` may follow, as a test of each candidate guide's root
+   * (called once per strand; null allows every guide). E.g. not guides combed apart at a parting: a strand blending
+   * both sides would hang down the parting line.
+   */
+  bindFilter?(root: SurfacePoint, group: number): ((guide: SurfacePoint) => boolean) | null;
 }
 
 export interface GuideData {
@@ -101,6 +118,12 @@ export interface GroomGroupData {
   guides: GuideData;
   strands: StrandData;
   maxLength: number;
+  /**
+   * Guide roots and the random draws their growth used (wave phases), kept with `GroomOptions.keepRoots` so
+   * `reshapeGroomGroup` can regrow the guide shapes at the same roots.
+   */
+  guideRoots?: SurfacePoint[];
+  guideDraws?: Float64Array;
 }
 
 export interface GroomData {

@@ -26,4 +26,12 @@ export interface Example {
   update(info: FrameInfo): void;
   /** Extra HUD lines. */
   hud?(): string[];
+  /** The example saves and restores its own work, so the shared Save / load folder (panel state) is left out. */
+  readonly ownsState?: boolean;
+  /** Extra Help entries for this example (HTML `<li>` items). */
+  readonly help?: string;
+  /** Its Help replaces the app's general entries (an example with controls of its own, like a tool). */
+  readonly helpOnly?: boolean;
+  /** What reloading the page would lose (asked before a quality change reloads it), or null if nothing. */
+  reloadWarning?(): string | null;
 }

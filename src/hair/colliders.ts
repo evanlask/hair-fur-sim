@@ -31,6 +31,8 @@ const tmpA = new THREE.Vector3();
 const tmpB = new THREE.Vector3();
 const tmpP = new THREE.Vector3();
 const tmpM = new THREE.Matrix4();
+const tmpQ = new THREE.Vector3();
+const tmpG = new THREE.Vector3();
 
 /**
  * Capsule colliders attached to bones/objects, plus one optional analytic shape and one optional baked
@@ -69,6 +71,9 @@ export class ColliderSet {
   /** The SDF's narrow band (local units): cells further away only know their sign. */
   readonly sdfBand = uniform(1);
   private readonly sdfWorldToLocal = new THREE.Matrix4();
+  /** sdfDistance's cache: the attach transform last inverted (NaN until first use) and its inverse. */
+  private readonly cpuSdfMatrix = new THREE.Matrix4().set(NaN, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  private readonly cpuSdfInverse = new THREE.Matrix4();
 
   private initialized = false;
 
@@ -172,9 +177,13 @@ export class ColliderSet {
   sdfDistance(p: THREE.Vector3, outNormal?: THREE.Vector3): number {
     if (!this.sdf) return Infinity;
     const { grid, attach } = this.sdf;
-    const inv = new THREE.Matrix4().copy(attach.matrixWorld).invert();
-    const q = p.clone().applyMatrix4(inv);
-    const grad = new THREE.Vector3();
+    // Groom-time callers ask for thousands of points under the same transform: invert it once.
+    if (!this.cpuSdfMatrix.equals(attach.matrixWorld)) {
+      this.cpuSdfMatrix.copy(attach.matrixWorld);
+      this.cpuSdfInverse.copy(attach.matrixWorld).invert();
+    }
+    const q = tmpQ.copy(p).applyMatrix4(this.cpuSdfInverse);
+    const grad = tmpG;
     const d = sampleSdf(grid, q, grad);
     if (!Number.isFinite(d)) return Infinity;
     if (outNormal) outNormal.copy(grad).transformDirection(attach.matrixWorld);
@@ -211,7 +220,8 @@ export class ColliderSet {
   }
 
   /**
-   * Pushes `p` out of all enabled capsules (bitmask) and the shape, by `margin`.
+   * Pushes `p` out of the enabled capsules (bitmask; capsules ≥ 32 always on), the shape and the mesh SDF, by
+   * `margin`.
    * Used at groom time. Returns true if moved.
    */
   pushOut(p: THREE.Vector3, mask: number, margin: number): boolean {

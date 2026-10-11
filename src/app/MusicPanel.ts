@@ -3,7 +3,7 @@ import type { FolderApi, ButtonApi } from 'tweakpane';
 import { METAL_RIFF, MUSIC_LIBRARY, trackLabel } from '../audio/library';
 import { METAL_BPM_RANGE, MusicPlayer, TRACK_BPM_RANGE, type MusicSource } from '../audio/MusicPlayer';
 import type { Gui } from './Gui';
-import { num, tip, toggle } from './Gui';
+import { alphabetical, num, tip, toggle } from './Gui';
 
 export interface MusicSync {
   /** Lock head motions to the music's beat while it plays. */
@@ -46,7 +46,7 @@ export class MusicPanel {
     const options: Record<string, string> = { [trackLabel(METAL_RIFF)]: 'metal' };
     for (const t of MUSIC_LIBRARY) options[trackLabel(t)] = t.id;
     this.ui.source = p.source;
-    f.addBinding(this.ui, 'source', { label: 'track', options }).on('change', () => {
+    f.addBinding(this.ui, 'source', { label: 'track', options: alphabetical(options) }).on('change', () => {
       void p.setSource(this.ui.source).then((started) => {
         if (started) this.onPlay?.(p.source);
         this.refresh();
@@ -150,6 +150,17 @@ export class MusicPanel {
       if (e.key === 't' || e.key === 'T') this.tap();
       if (e.key === 'm' || e.key === 'M') void this.togglePlay();
     });
+    this.refresh();
+  }
+
+  /** Plays `source` (switching to it), or stops the music if that's what is playing. */
+  async toggleSource(source: MusicSource): Promise<void> {
+    const p = this.player;
+    if ((p.playing || p.pending) && p.source === source) p.stop();
+    else {
+      p.source = source;
+      if (await p.play()) this.onPlay?.(p.source);
+    }
     this.refresh();
   }
 

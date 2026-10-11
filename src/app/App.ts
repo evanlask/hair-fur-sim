@@ -94,7 +94,7 @@ export class App {
     this.renderer = renderer;
     container.appendChild(renderer.domElement);
 
-    renderer.toneMapping = THREE.AgXToneMapping;
+    renderer.toneMapping = THREE.ReinhardToneMapping;
     renderer.toneMappingExposure = 1.0;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
@@ -181,7 +181,7 @@ export class App {
     const request = ++this.envRequest;
     let tex = this.envTextures.get(name);
     if (!tex) {
-      tex = await new HDRLoader().loadAsync(`env/${name}`);
+      tex = await loadGzippedHdr(`env/${name}.gz`);
       tex.mapping = THREE.EquirectangularReflectionMapping;
       this.envTextures.set(name, tex);
     }
@@ -193,6 +193,10 @@ export class App {
 
   private antialiasing: AntialiasingMode = 'msaa';
   private readonly pipelines = new Map<AntialiasingMode, THREE.RenderPipeline>();
+
+  getAntialiasing(): AntialiasingMode {
+    return this.antialiasing;
+  }
 
   setAntialiasing(mode: AntialiasingMode): void {
     this.antialiasing = mode;
@@ -307,5 +311,25 @@ export class App {
     mesh.receiveShadow = true;
     mesh.name = 'floor';
     return mesh;
+  }
+}
+
+/**
+ * Loads a gzipped .hdr (public/env: gzip shrinks them by about a fifth, and GitHub Pages serves them as they are).
+ * Unpacks it with the browser's DecompressionStream, unless the server already did (no gzip header).
+ */
+async function loadGzippedHdr(url: string): Promise<THREE.DataTexture> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status} ${res.statusText}`);
+  let bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  const blobUrl = URL.createObjectURL(new Blob([bytes]));
+  try {
+    return await new HDRLoader().loadAsync(blobUrl);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
   }
 }

@@ -1,7 +1,7 @@
 import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
-import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, alphabetical, num, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { MusicPanel } from '../app/MusicPanel';
 import { motionForTrack } from '../audio/library';
@@ -38,6 +38,12 @@ export class MulletExample implements Example {
   private shadingDefaults!: Record<keyof MulletParams, ShadingParams>;
   private rebuildTimer = 0;
   private music!: MusicPanel;
+  /** Under the examples menu: plays What Is Love (and stops it), without opening the debug panel. */
+  private readonly party = document.createElement('button');
+  private partying = false;
+  /** The party turned the wind on, so it turns it off again when it ends (a wind you turned on stays on). */
+  private partyWind = false;
+  private windFolder!: FolderApi;
   /** The current motion was picked for the playing track (not by you), so the next track may replace it. */
   private autoMotion = false;
   /** Motion to return to when the music stops (what the head did before a track picked one). */
@@ -60,11 +66,11 @@ export class MulletExample implements Example {
       groom: this.groom,
       strandScale: quality.strandScale,
       guideScale: quality.guideScale,
-      plinthHeight: 0.8,
+      baseHeight: 0.8,
     });
     app.scene.add(this.character.root, this.character.colliderDebug.group);
     this.character.motion = this.settings.motion;
-    // Drag shakes the bust (not the plinth).
+    // Drag shakes the bust.
     this.drag = new DragSpring(app, this.character.bust, () => [this.character.mesh]);
     this.drag.stiffness = 160;
     this.drag.damping = 16;
@@ -76,7 +82,8 @@ export class MulletExample implements Example {
     lights.params.keyAzimuth = 40;
     lights.params.keyElevation = 40;
     lights.apply();
-    // Wind starts off; turned on, a gusty breeze from the front, slightly above, streams the party hair back.
+    // Wind starts off (the party turns it on); turned on, a gusty breeze from the front, slightly above, streams the
+    // party hair back.
     Object.assign(hairWind.params, {
       strength: 6.52,
       azimuth: 11.74,
@@ -94,14 +101,14 @@ export class MulletExample implements Example {
     const f = gui.folder('Wayne');
     const motionBinding = f
       .addBinding(this.settings, 'motion', {
-        options: {
+        options: alphabetical({
           still: 'still',
           idle: 'idle',
           nod: 'nod',
           headbang: 'headbang',
           roxbury: 'roxbury',
           'look around': 'lookAround',
-        },
+        }),
       })
       .on('change', () => {
         this.character.motion = this.settings.motion;
@@ -205,7 +212,7 @@ export class MulletExample implements Example {
     );
 
     // Wind is shared by both groups, so it sits above their tabs.
-    addWindFolder(gui.pane);
+    this.windFolder = addWindFolder(gui.pane);
     // Each groom group has its own Basics and folders, switched with tabs.
     const groups = hairFolder.addTab({ pages: [{ title: 'Business (top)' }, { title: 'Party (back)' }] });
     (['business', 'party'] as const).forEach((k, i) => {
@@ -232,10 +239,18 @@ export class MulletExample implements Example {
         this.autoMotion = true;
       }
     };
-    // When the music stops, a motion the track picked goes back to idle (or still); yours keeps going.
+    // When the music stops, a motion the track picked reverts to the one before it; yours keeps going.
     this.music.onStop = () => {
       if (this.autoMotion) setMotion(this.motionBeforeMusic);
     };
+
+    const bar = document.createElement('div');
+    bar.id = 'party';
+    this.party.textContent = 'Press to party';
+    this.party.title = 'Play What Is Love, with the wind blowing (M plays and stops the music too)';
+    this.party.onclick = () => void this.music.toggleSource('what-is-love');
+    bar.appendChild(this.party);
+    document.body.appendChild(bar);
   }
 
   viewControls(f: FolderApi): void {
@@ -269,6 +284,17 @@ export class MulletExample implements Example {
     this.character.hair.setVisibility(this.settings.showStrands, this.settings.showGuides);
   }
 
+  /** The wind blows while the party lasts (however the music started or stopped). */
+  private setPartyWind(on: boolean): void {
+    const w = hairWind.params;
+    if (on && !w.enabled) this.partyWind = true;
+    else if (!on && this.partyWind) this.partyWind = false;
+    else return;
+    w.enabled = on;
+    hairWind.sync();
+    this.windFolder.refresh();
+  }
+
   private scheduleRegroom(): void {
     clearTimeout(this.rebuildTimer);
     this.rebuildTimer = window.setTimeout(() => this.character.groom(), 300);
@@ -276,12 +302,20 @@ export class MulletExample implements Example {
 
   update(info: FrameInfo): void {
     this.music.update(info.realDt);
+    const p = this.music.player;
+    const partying = p.source === 'what-is-love' && (p.playing || p.pending);
+    if (partying !== this.partying) {
+      this.partying = partying;
+      this.party.classList.toggle('active', partying);
+      this.party.textContent = partying ? 'Stop the party' : 'Press to party';
+      this.setPartyWind(partying);
+    }
     this.character.beatDivision = this.music.sync.division;
     this.drag.update(info.dt);
     this.character.update(info.dt);
   }
 
   hud(): string[] {
-    return [`wayne   motion ${this.settings.motion}`, this.music.hud()];
+    return [`motion ${this.settings.motion}`, this.music.hud()];
   }
 }

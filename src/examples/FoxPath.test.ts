@@ -1,41 +1,47 @@
 import * as THREE from 'three/webgpu';
 import { describe, expect, it } from 'vite-plus/test';
 
-import { FoxPath, MAX_WOBBLE } from './FoxPath';
-// import { FoxPath, MAX_WOBBLE, MIN_SEPARATION } from './FoxPath';
+import { FoxPath, MAX_WOBBLE, MIN_SEPARATION } from './FoxPath';
 
 describe('FoxPath', () => {
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
 
-  // it('keeps two foxes apart and never lets them pass each other', () => {
-  //   // A default loop (room to stagger) and a small, very wobbly one (none: the foxes stay opposite).
-  //   for (const [radius, wiggle] of [
-  //     [1.3, 1],
-  //     [0.6, 1.5],
-  //   ]) {
-  //     const rMin = radius * (1 - wiggle * MAX_WOBBLE);
-  //     const minGap = Math.min(MIN_SEPARATION, 2 * rMin);
-  //     for (let seed = 1; seed <= 20; seed++) {
-  //       const path = new FoxPath(seed);
-  //       path.radius = radius;
-  //       path.wiggle = wiggle;
-  //       let min = Infinity;
-  //       // Long enough for many stagger cycles, with the shape drifting too.
-  //       for (let i = 0; i < 20000; i++) {
-  //         path.advance(0.05, 1.2, 2);
-  //         const t0 = path.foxAngle(0);
-  //         const t1 = path.foxAngle(1);
-  //         min = Math.min(min, path.point(t0, a).distanceTo(path.point(t1, b)));
-  //         // Fox 1 stays strictly ahead of fox 0 and behind it a lap later: they never meet on the loop.
-  //         expect(t1 - t0).toBeGreaterThan(0);
-  //         expect(t1 - t0).toBeLessThan(Math.PI * 2);
-  //         expect(Math.abs(t1 - t0 - Math.PI)).toBeLessThanOrEqual(path.maxStagger() + 1e-9);
-  //       }
-  //       expect(min).toBeGreaterThanOrEqual(minGap - 1e-9);
-  //     }
-  //   }
-  // });
+  it('keeps two foxes apart and never lets them pass each other', () => {
+    // A default loop (room to stagger) and a small, very wobbly one (none: the foxes stay opposite).
+    for (const [radius, wiggle] of [
+      [1.3, 1],
+      [0.6, 1.5],
+    ]) {
+      const rMin = radius * (1 - wiggle * MAX_WOBBLE);
+      const minGap = Math.min(MIN_SEPARATION, 2 * rMin);
+      for (let seed = 1; seed <= 8; seed++) {
+        const path = new FoxPath(seed);
+        path.radius = radius;
+        path.wiggle = wiggle;
+        let min = Infinity;
+        // Worst cases of the run, checked once at the end (an expect per step is very slow).
+        let leastApart = Infinity;
+        let mostApart = -Infinity;
+        let overStagger = -Infinity;
+        // Long enough for many stagger cycles, with the shape drifting too.
+        for (let i = 0; i < 20000; i++) {
+          path.advance(0.05, 1.2, 2);
+          const t0 = path.foxAngle(0);
+          const t1 = path.foxAngle(1);
+          min = Math.min(min, path.point(t0, a).distanceTo(path.point(t1, b)));
+          leastApart = Math.min(leastApart, t1 - t0);
+          mostApart = Math.max(mostApart, t1 - t0);
+          overStagger = Math.max(overStagger, Math.abs(t1 - t0 - Math.PI) - path.maxStagger());
+        }
+        // Fox 1 stays strictly ahead of fox 0 and behind it a lap later: they never meet on the loop.
+        expect(leastApart).toBeGreaterThan(0);
+        expect(mostApart).toBeLessThan(Math.PI * 2);
+        expect(overStagger).toBeLessThanOrEqual(1e-9);
+        expect(min).toBeGreaterThanOrEqual(minGap - 1e-9);
+      }
+    }
+  });
 
   it('sometimes lets one fox walk close behind the other on the default loop', () => {
     let closest = Infinity;

@@ -47,7 +47,7 @@ export interface GroupContext {
    * All zero for points that aren't drawn (culled or hidden strands).
    */
   renderColor: N;
-  /** Per strand (uint): 1 when it faces away from the camera, so it is only interpolated for the shadow map. */
+  /** Per strand (uint): 1 when it is on the far side of the body, so it isn't drawn (only used for shadows). */
   strandHidden: N;
   /** Temporally smoothed self-shadow transmittance per render point (vec2: key side, far side). */
   shadowHistory: N;

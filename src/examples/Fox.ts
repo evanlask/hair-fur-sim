@@ -1,7 +1,7 @@
 import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
-import { addHairBasics, addHairFolders, addWindFolder, num, toggle } from '../app/Gui';
+import { addHairBasics, addHairFolders, addWindFolder, alphabetical, num, toggle } from '../app/Gui';
 import { defaultGrassStyle } from '../hair/groom/styles/grassStyle';
 import { hairWind, mergeHairParams, type HairParamsData } from '../hair/params';
 import type { Example, ExampleContext } from './Example';
@@ -113,7 +113,7 @@ export class FoxExample implements Example {
     lights.focus.set(0, 0.4, 0);
     lights.focusRadius = 3.2;
     lights.update();
-    // A light crosswind (relative to the camera), so gusts roll across the grass.
+    // A light crosswind (across the default view), so gusts roll across the grass.
     Object.assign(hairWind.params, {
       enabled: true,
       strength: 1.8,
@@ -135,7 +135,7 @@ export class FoxExample implements Example {
     const f = gui.folder('Fox');
     f.addBinding(this.settings, 'animation', {
       label: 'motion',
-      options: { survey: 'Survey', walk: 'Walk', run: 'Run' },
+      options: alphabetical({ survey: 'Survey', walk: 'Walk', run: 'Run' }),
     }).on('change', () => this.foxes.forEach((fx) => fx.setAnimation(this.settings.animation)));
     num(f, this.settings, 'speed', { min: 0.1, max: 2, label: 'speed' }, () =>
       this.foxes.forEach((fx) => (fx.speedScale = this.settings.speed)),

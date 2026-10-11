@@ -20,10 +20,17 @@ const {
   min,
   mix,
   select,
+  smoothstep,
   uint,
   vec3,
   vec4,
 } = tsl;
+
+/**
+ * Cells over which the baked mesh SDF's push fades in from the grid's bounds, so hair resting across an edge that
+ * cuts through the skin (a torso SDF ending at the neck) isn't shoved out abruptly and left flicking.
+ */
+const SDF_EDGE_FADE = 1.5;
 
 /**
  * Analytic SDF of the collider shape in its local space. Returns vec4(gradient.xyz, distance).
@@ -150,7 +157,7 @@ export function collide(
       const nWorld = safeNormalize(matCurr.mul(vec4(s.xyz, 0)).xyz, vec3(0, 1, 0));
       x.addAssign(nWorld.mul(margin.sub(s.w)));
       normal.assign(nWorld);
-      // Point fixed to the shape: where it is now vs. a frame ago.
+      // Collider motion at the contact: where the shape point under x a frame ago is now.
       const moved = matCurr.mul(vec4(qp, 1)).xyz;
       disp.assign(moved.sub(x).mul(stepFrac));
     });
@@ -202,7 +209,10 @@ export function collide(
       If(dWorld.lessThan(margin).and(apply), () => {
         const toWorld = colliders.sdfLocalToWorld as N;
         const nWorld = safeNormalize(toWorld.mul(vec4(grad, 0)).xyz, vec3(0, 1, 0));
-        x.addAssign(nWorld.mul(min(margin.sub(dWorld), maxSdfPush)));
+        const far = dims.sub(1).sub(g);
+        const toEdge = min(min(min(g.x, g.y), g.z), min(min(far.x, far.y), far.z));
+        const fade = smoothstep(0, SDF_EDGE_FADE, toEdge);
+        x.addAssign(nWorld.mul(min(margin.sub(dWorld), maxSdfPush).mul(fade)));
         normal.assign(nWorld);
         const prevLocal = (colliders.sdfWorldToLocalPrev as N).mul(vec4(x, 1));
         disp.assign(toWorld.mul(prevLocal).xyz.sub(x).mul(stepFrac));

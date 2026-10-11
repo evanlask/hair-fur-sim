@@ -103,7 +103,7 @@ function closestOnTriangle(p: THREE.Vector3, out: THREE.Vector3, bary: [number, 
  * Distances within `band` are exact (closest triangle, sign from the interpolated vertex normal);
  * cells further away get ±band with the sign flood-filled from the band. An optional per-vertex vec4
  * `attribute` is interpolated at the closest point (and flood-filled the same way) into `weights`;
- * `closestVertex` records the vertex nearest to each cell's closest point (flood-filled too) in `vertex`.
+ * `closestVertex` records the closest triangle's dominant (largest-barycentric) vertex (flood-filled too) in `vertex`.
  */
 export function bakeMeshSdf(
   positions: Float32Array,

@@ -99,7 +99,9 @@ export class YetiExample implements Example {
     const { app, gui, hair, lights, quality } = ctx;
     this.params = createYetiFurParams(quality.substeps);
     this.shadingDefaults = { ...this.params.shading };
+    await ctx.loading.step('Loading yeti model…');
     await loadYeti();
+    await ctx.loading.step('Growing fur…');
     this.character = await YetiCharacter.create({
       name: 'yeti',
       hair,
@@ -120,7 +122,7 @@ export class YetiExample implements Example {
     lights.focusRadius = 1.3;
     lights.update();
 
-    const f = gui.folder('Yeti', true);
+    const f = gui.folder('Yeti');
     f.addBinding(this.settings, 'motion', { options: { idle: 'idle', still: 'still' } }).on(
       'change',
       () => (this.character.motion = this.settings.motion),
@@ -137,7 +139,7 @@ export class YetiExample implements Example {
       for (const g of this.character.hair.groups) g.syncParams();
       this.character.furTint.value.set(this.params.shading.rootColor);
     };
-    const fur = gui.folder('Fur', true);
+    const fur = gui.folder('Fur');
     // The 'brown' preset restores this example's defaults, which for the yeti is its own frost look.
     const furOptions = Object.fromEntries(
       Object.entries(hairColorOptions()).map(([label, value]) => [
@@ -155,7 +157,7 @@ export class YetiExample implements Example {
     addHairBasics(fur, this.params, sync);
     const g = gui.folder('Groom (regrows fur)', false, fur);
     const rebuild = () => this.scheduleRegroom();
-    num(g, this.groom, 'lengthScale', { min: 0.3, max: 2.5, label: 'length scale' }, rebuild);
+    num(g, this.groom, 'lengthScale', { min: 0.3, max: 3, label: 'length scale' }, rebuild);
     num(g, this.groom, 'beardLength', { min: 2, max: 20, scale: 100, label: 'beard length (cm)' }, rebuild);
     num(
       g,
@@ -180,16 +182,10 @@ export class YetiExample implements Example {
       g,
       this.groom,
       'guideCount',
-      { min: 300, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
+      { min: 100, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
       rebuild,
     );
-    num(
-      g,
-      this.groom,
-      'strandCount',
-      { min: 10000, max: 500000, step: 5000, label: 'strand count' },
-      rebuild,
-    );
+    num(g, this.groom, 'strandCount', { min: 5000, max: 500000, step: 5000, label: 'strand count' }, rebuild);
     num(
       g,
       this.groom,
@@ -216,7 +212,7 @@ export class YetiExample implements Example {
       },
       rebuild,
     );
-    addWindFolder(fur);
+    addWindFolder(gui.pane);
     addHairFolders(fur, this.params, sync);
     sync();
   }

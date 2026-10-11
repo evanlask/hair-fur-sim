@@ -1,31 +1,73 @@
-import { mix, positionLocal, smoothstep, uniform } from 'three/tsl';
+import {
+  abs,
+  cameraPosition,
+  color,
+  cos,
+  float,
+  max,
+  mix,
+  mx_noise_float,
+  positionLocal,
+  positionWorld,
+  pow,
+  sin,
+  smoothstep,
+  vec3,
+} from 'three/tsl';
 import * as THREE from 'three/webgpu';
 
+import type { HairPanelOptions } from '../app/Gui';
 import { ColliderSet } from '../hair/colliders';
 import { createGrassStyle, type GrassStyleParams } from '../hair/groom/styles/grassStyle';
 import { rigidGrowth } from '../hair/growth';
 import type { HairInstance } from '../hair/HairInstance';
 import { mergeHairParams, type HairParamsData } from '../hair/params';
+import type { N } from '../hair/sim/tslUtil';
 import type { ExampleContext } from './Example';
 import type { FoxCharacter } from './FoxCharacter';
 
 export type GrassParams = Record<'grass' | 'stalks', HairParamsData>;
 
-/** Fox capsules grow by this much for the grass, so a step parts a swath rather than slipping between guides. */
+/**
+ * Grass blades are millimetres wide and sparse next to hair, so their panels cover larger widths and gaps; and the
+ * ground never moves, has no body shape, always faces the camera and doesn't curl, so those controls are left out.
+ */
+export const GRASS_PANEL: HairPanelOptions = {
+  ranges: {
+    rootWidth: { min: 0.2, max: 5 },
+    tipWidth: { min: 0, max: 5 },
+    taper: { min: 0.1, max: 10 },
+    frizz: { min: 0, max: 20 },
+    collisionMargin: { min: 0, max: 60 },
+    selfShadowDensity: { min: 0, max: 50 },
+  },
+  hide: ['curlRadius', 'curlTurns', 'curlRamp', 'followRoot', 'sdfRootRange', 'backCull'],
+};
+
+/**
+ * Fox capsules grow by this much for the grass, so a step parts a swath rather than slipping between guides.
+ * The capsules hug the body and the fur stands off it, so the body grows too: grass parting a little early
+ * reads better than blades poking through the fur.
+ */
 const PUSH_INFLATE: Record<string, number> = {
-  lFoot: 1.6,
-  rFoot: 1.6,
-  lFore: 1.5,
-  rFore: 1.5,
-  lShin: 1.35,
-  rShin: 1.35,
-  lArm: 1.2,
-  rArm: 1.2,
-  lThigh: 1.2,
-  rThigh: 1.2,
-  tail1: 1.1,
-  tail2: 1.1,
-  tail3: 1.1,
+  lFoot: 1.8,
+  rFoot: 1.8,
+  lFore: 1.7,
+  rFore: 1.7,
+  lShin: 1.6,
+  rShin: 1.6,
+  lArm: 1.4,
+  rArm: 1.4,
+  lThigh: 1.35,
+  rThigh: 1.35,
+  hips: 1.25,
+  chest: 1.25,
+  neck: 1.25,
+  head: 1.25,
+  snout: 1.4,
+  tail1: 1.3,
+  tail2: 1.3,
+  tail3: 1.4,
 };
 
 /**
@@ -55,7 +97,8 @@ export function createGrassParams(substeps: number, strandScale: number): GrassP
         drag: 2.2,
         followRoot: 0,
         maxVelocity: 3,
-        collisionMargin: 0.012,
+        // Drawn blades sit up to half a guide spacing (~2.5 cm) from the guide that collided.
+        collisionMargin: 0.025,
         collisionFriction: 0.7,
         rootColliderRange: 0,
         rootPlane: 0.04,
@@ -67,8 +110,8 @@ export function createGrassParams(substeps: number, strandScale: number): GrassP
         clumpShape: 1,
         frizz: 0.006,
         frizzFrequency: 2,
-        rootWidth: 0.0022 * widen,
-        tipWidth: 0.00015 * widen,
+        rootWidth: 0.0015 * widen,
+        tipWidth: 0.0001 * widen,
         taper: 2,
         // The field spans every depth: skip blades out of view and thin out distant ones (sub-pixel anyway).
         cullOffscreen: true,
@@ -100,7 +143,7 @@ export function createGrassParams(substeps: number, strandScale: number): GrassP
         drag: 3,
         followRoot: 0,
         maxVelocity: 4,
-        collisionMargin: 0.015,
+        collisionMargin: 0.035,
         collisionFriction: 0.6,
         rootColliderRange: 0,
         rootPlane: 0.04,
@@ -138,6 +181,33 @@ export function createGrassParams(substeps: number, strandScale: number): GrassP
 }
 
 /**
+ * Matted blades under the grass, in the blades' own colours, so the ground showing between them (more of it far
+ * away, where the view LOD thins the blades) reads as more grass rather than bare soil. `xz` is in metres.
+ */
+function thatchColor(xz: N): N {
+  // Three layers of blades, each lying along a direction that wanders gently across the field.
+  const flow = mx_noise_float(vec3(xz.x, 0, xz.y).mul(0.35)).mul(1.2);
+  let blades: N = float(0);
+  [0, 1.0, 2.1].forEach((offset, i) => {
+    const c = cos(flow.add(offset));
+    const s = sin(flow.add(offset));
+    const along = xz.x.mul(c).add(xz.y.mul(s));
+    const across = xz.y.mul(c).sub(xz.x.mul(s));
+    // Thin bright lines along the noise's ridges: long along the blade (~15 cm), a few mm across.
+    const n = mx_noise_float(vec3(along.mul(7), across.mul(110), i * 7.3));
+    const ridge = pow(float(1).sub(abs(n)), 5);
+    blades = max(blades, ridge.mul(0.85 - i * 0.15));
+  });
+  // The lines are finer than a pixel a few metres out: fade them to their average there instead of shimmering.
+  const detail = float(1).sub(smoothstep(2.5, 9, positionWorld.sub(cameraPosition).length()));
+  blades = mix(float(0.3), blades, detail);
+  // Patches of green and of straw, like the blades' own dryness.
+  const dry = smoothstep(-0.35, 0.45, mx_noise_float(vec3(xz.x, 5, xz.y).mul(0.4)));
+  const blade = mix(color('#5d6830'), color('#a39260'), dry);
+  return mix(color('#3d4221'), blade, blades.mul(0.75));
+}
+
+/**
  * A field of prairie grass on the floor, groomed and simulated as hair: a ground plane is the growth mesh,
  * wind is the shared hair wind, and the foxes' capsules (copied, slightly inflated) push it aside.
  */
@@ -155,7 +225,7 @@ export class GrassField {
     const { app, hair, quality } = ctx;
     // Fine, even triangles: the groomer weights triangles by their density at only 4 points.
     const size = style.radius * 2;
-    const geometry = new THREE.PlaneGeometry(size, size, 180, 180).rotateX(-Math.PI / 2);
+    const geometry = new THREE.PlaneGeometry(size, size, 360, 360).rotateX(-Math.PI / 2);
     const { source, growth } = rigidGrowth(geometry, this.anchor);
     geometry.dispose();
     this.instance = hair.createInstance({
@@ -176,13 +246,13 @@ export class GrassField {
       shadowResolution: Math.min(2048, quality.hairShadowSize * 2),
     });
 
-    // Soil under the grass, blending back into the floor beyond it.
+    // Thatch under the grass, blending back into the floor beyond it.
     const floor = app.floor.material as THREE.MeshPhysicalNodeMaterial;
     this.savedFloorColor = floor.colorNode;
-    const soil = uniform(new THREE.Color('#2e2618'));
+    const thatch = thatchColor(positionLocal.xz);
     const r = positionLocal.xz.length();
-    const base = (this.savedFloorColor ?? soil) as THREE.Node<'color'>;
-    floor.colorNode = mix(soil, base, smoothstep(style.radius * 0.6, style.radius * 1.05, r));
+    const base = (this.savedFloorColor ?? thatch) as THREE.Node<'color'>;
+    floor.colorNode = mix(thatch, base, smoothstep(style.radius * 0.6, style.radius * 1.05, r));
     floor.needsUpdate = true;
   }
 

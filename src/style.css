@@ -116,6 +116,71 @@ body {
   color: var(--accent);
 }
 
+#loading {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #0d0e12;
+  color: var(--muted);
+  font-size: 14px;
+  z-index: 30;
+  transition: opacity 0.35s;
+}
+
+#loading[hidden] {
+  display: none;
+}
+
+#loading.done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#loading p {
+  margin: 0;
+}
+
+/* Rotating with a transform keeps it on the compositor, so it turns while grooming blocks the page. */
+#loading .spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  will-change: transform;
+  animation: spin 0.9s linear infinite;
+}
+
+/* Over a running scene (regrooms): a small pill at the top instead of the full-screen cover. */
+#loading.badge {
+  inset: 12px auto auto 50%;
+  flex-direction: row;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#loading.badge .spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .tp-dfwv {
   width: 360px !important;
   max-height: calc(100vh - 24px);

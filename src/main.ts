@@ -4,6 +4,7 @@ import { App, WebGPUUnavailableError } from './app/App';
 import { Gui, addSimulationControls, num, tip } from './app/Gui';
 import { LIGHTING_PRESETS, type LightingName, type LightingPreset } from './app/lightingPresets';
 import { LightRig } from './app/LightRig';
+import { Loading } from './app/Loading';
 import { QUALITY, getQuality, type QualityName, type QualityPreset } from './app/quality';
 import { Stats } from './app/Stats';
 import type { Example, ExampleContext } from './examples/Example';
@@ -27,6 +28,7 @@ function showStatus(title: string, body: string): void {
   el.innerHTML = `<div class="box"><h2>${title}</h2>${body.trimStart().startsWith('<') ? body : `<p>${body}</p>`}</div>`;
   el.dataset.kind = '';
   el.hidden = false;
+  document.getElementById('loading')!.hidden = true;
 }
 
 const HELP_HTML = `
@@ -96,6 +98,8 @@ async function main(): Promise<void> {
   const key = resolved in EXAMPLES ? resolved : 'hairball';
   buildNav(key);
   const quality = getQuality();
+  const loading = new Loading();
+  await loading.step('Starting WebGPU…');
 
   let app: App;
   try {
@@ -116,6 +120,7 @@ async function main(): Promise<void> {
   const lights = new LightRig(app.scene, app.renderer);
   lights.params.shadowMapSize = quality.shadowMapSize;
   lights.apply();
+  await loading.step('Loading lighting…');
   await app.loadEnvironment(LIGHTING_PRESETS.studio.env, lights.params.envIntensity);
 
   const gui = new Gui();
@@ -124,7 +129,8 @@ async function main(): Promise<void> {
   const stats = new Stats(app.renderer, document.getElementById('hud')!);
 
   // The example's own folders come first (what you play with most), then the scene-wide ones.
-  const ctx: ExampleContext = { app, hair, gui, lights, quality };
+  const ctx: ExampleContext = { app, hair, gui, lights, quality, loading };
+  await loading.step(`Loading ${EXAMPLES[key].title}…`);
   const example = await EXAMPLES[key].load();
   await example.init(ctx);
   hair.registerShadowReceiver(app.floor.material as THREE.NodeMaterial);
@@ -139,7 +145,6 @@ async function main(): Promise<void> {
 
   app.onUpdate = (info) => {
     stats.beginCpu();
-    gui.fps.begin();
     // Pausing the simulation also freezes the examples' animation (one 1/60 s step for "Step one frame"), so
     // bodies don't move away from their paused hair.
     example.update(hair.paused ? { ...info, dt: hair.stepOnce ? 1 / 60 : 0 } : info);
@@ -147,10 +152,12 @@ async function main(): Promise<void> {
   };
   app.onAfterRender = (info) => {
     stats.endCpu();
-    gui.fps.end();
     stats.update(info.realDt, hair.stats(), example.hud?.() ?? []);
+    // The first frames compile the shaders; the scene is ready once they are through.
+    if (info.frame === 2) loading.hide();
   };
   app.onError = (err) => showStatus('Rendering stopped', String(err));
+  await loading.step('Compiling shaders…');
   app.start();
 
   // Debug handle for automated checks (DevTools MCP).
@@ -209,7 +216,7 @@ function addRenderingFolder(
   quality: QualityPreset,
   params: URLSearchParams,
 ): void {
-  const rendering = gui.folder('Rendering', false);
+  const rendering = gui.folder('Rendering', true);
   const q = {
     preset: quality.name as QualityName,
     renderScale: quality.renderScale,
@@ -362,7 +369,7 @@ function addLightingFolder(gui: Gui, app: App, lights: LightRig, hair: HairSyste
       page,
       lp,
       `${lamp}Azimuth`,
-      { min: -180, max: 360, label: 'azimuth (°)', hint: 'Direction around the scene (0 = from +Z).' },
+      { min: -180, max: 180, label: 'azimuth (°)', hint: 'Direction around the scene (0 = from +Z).' },
       apply,
     );
     num(
@@ -424,4 +431,8 @@ function addPresetControls(gui: Gui, exampleKey: string): void {
   f.addButton({ title: 'Reset to defaults' }).on('click', () => location.reload());
 }
 
-main().catch((err) => console.error('[fursim]', err));
+main().catch((err) => {
+  console.error('[fursim]', err);
+  // Keep a more specific message (e.g. "WebGPU required") if one is already up.
+  if (document.getElementById('status')!.hidden) showStatus('Failed to start', String(err));
+});

@@ -7,6 +7,11 @@ export interface GrassStyleParams {
   /** Radius (m) of the field around the origin; density fades out over `fade` towards it. */
   radius: number;
   fade: number;
+  /**
+   * Beyond this radius (m) density thins as (thinFrom / r)^1.5, matching how the view LOD thins blades seen from
+   * the middle, so the outer field costs little; 0 = even density everywhere.
+   */
+  thinFrom: number;
   /** Multiplier on the understory blade length (base ~6–26 cm). */
   height: number;
   /** Multiplier on the seed stalk length (base ~40–85 cm). */
@@ -21,15 +26,16 @@ export interface GrassStyleParams {
 }
 
 export const defaultGrassStyle = (): GrassStyleParams => ({
-  radius: 4.5,
-  fade: 1.2,
+  radius: 9,
+  fade: 2,
+  thinFrom: 4.5,
   height: 1,
   stalkHeight: 1,
   stalkAmount: 1,
-  guideCount: 28000,
-  strandCount: 450000,
-  stalkGuides: 3500,
-  stalkStrands: 24000,
+  guideCount: 70000,
+  strandCount: 1000000,
+  stalkGuides: 12000,
+  stalkStrands: 85000,
   seed: 11,
 });
 
@@ -56,15 +62,32 @@ export function createGrassStyle(p: GrassStyleParams): GroomStyle {
   const tuft = { x: 0, z: 0, dist: 0, id: 0 };
   const lean = new THREE.Vector3();
   const edgeAt = (x: number, z: number) => 1 - smoothstep(p.radius - p.fade, p.radius, Math.hypot(x, z));
+  /** Density only (blade lengths keep following `edgeAt`). */
+  const thinAt = (x: number, z: number) => {
+    const r = Math.hypot(x, z);
+    return p.thinFrom > 0 && r > p.thinFrom ? Math.pow(p.thinFrom / r, 1.5) : 1;
+  };
   const s = p.seed;
 
-  /** Where the seed stalks stand (0..1). */
-  const stalkDrift = (x: number, z: number) =>
-    Math.min(1, p.stalkAmount * smoothstep(0.45, 0.72, fbm2(x * 0.35 + 17, z * 0.35, 3, s + 3)));
+  // A bump in the drift noise around a point near the middle, so there is (almost) always a drift in view there
+  // instead of one only on the far edges. Without it about half the seeds leave the middle bare; with it, ~7%.
+  const bumpAngle = hash2(1, 2, s) * Math.PI * 2;
+  const bumpOffset = Math.sqrt(hash2(3, 4, s)) * 0.8;
+  const bumpX = Math.cos(bumpAngle) * bumpOffset;
+  const bumpZ = Math.sin(bumpAngle) * bumpOffset;
+
+  /** Where the seed stalks stand (0..1): broad, low-frequency drifts a few metres across, not scattered specks. */
+  const stalkDrift = (x: number, z: number) => {
+    const bump = 0.35 * (1 - smoothstep(0, 2, Math.hypot(x - bumpX, z - bumpZ)));
+    return Math.min(
+      1,
+      p.stalkAmount * smoothstep(0.43, 0.63, fbm2(x * 0.25 + 17, z * 0.25, 2, s + 3) + bump),
+    );
+  };
 
   const density = (sp: SurfacePoint, group: number): number => {
     const { x, z } = sp.position;
-    const edge = edgeAt(x, z);
+    const edge = edgeAt(x, z) * thinAt(x, z);
     if (edge <= 0) return 0;
     let d: number;
     if (group === STALK_GROUP) {
@@ -73,8 +96,8 @@ export function createGrassStyle(p: GrassStyleParams): GroomStyle {
       const patch = smoothstep(0.28, 0.55, fbm2(x * 0.6, z * 0.6, 3, s));
       worley2(x, z, TUFT_CELL, s + 1, tuft);
       const inTuft = 1 - smoothstep(0.3, 0.85, tuft.dist);
-      // Thinner patches rather than bare ones, and always a short understory beneath the stalks.
-      const open = mix(0.35, 1, patch) * mix(0.5, 1, inTuft);
+      // Thinner patches rather than bald ones, and always a short understory beneath the stalks.
+      const open = mix(0.6, 1, patch) * mix(0.65, 1, inTuft);
       d = edge * Math.max(open, 0.85 * stalkDrift(x, z));
     }
     return d < MIN_DENSITY ? 0 : d;

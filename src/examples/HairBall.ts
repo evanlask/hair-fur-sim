@@ -75,9 +75,10 @@ export class HairBallExample implements Example {
     this.drag = new DragSpring(app, this.pivot, () => (this.body ? [this.body] : []));
     this.drag.home.copy(HOME);
     this.buildBody();
+    await ctx.loading.step('Growing hair…');
     this.buildHair();
 
-    const f = gui.folder('Hair Ball', true);
+    const f = gui.folder('Hair Ball');
     f.addBinding(this.settings, 'shape', {
       options: {
         sphere: 'sphere',
@@ -100,10 +101,10 @@ export class HairBallExample implements Example {
         swing: 'swing',
       },
     });
-    num(f, this.settings, 'motionSpeed', { min: 0.1, max: 3, label: 'speed' }, () => {});
+    num(f, this.settings, 'motionSpeed', { min: 0.1, max: 2, label: 'speed' }, () => {});
     num(f, this.settings, 'motionAmount', { min: 0, max: 2, label: 'amount' }, () => {});
 
-    const hairFolder = gui.folder('Hair', true);
+    const hairFolder = gui.folder('Hair');
     const sync = () => this.syncParams();
     hairFolder
       .addBinding(this.settings, 'hairColor', { label: 'hair color', options: hairColorOptions() })
@@ -168,9 +169,9 @@ export class HairBallExample implements Example {
       this.groomParams,
       'strandCount',
       {
-        min: 1000,
-        max: 400000,
-        step: 1000,
+        min: 5000,
+        max: 500000,
+        step: 5000,
         label: 'strand count',
         hint: 'Drawn strands (interpolated from the guides).',
       },
@@ -203,7 +204,7 @@ export class HairBallExample implements Example {
       rebuild,
     );
 
-    addWindFolder(hairFolder);
+    addWindFolder(gui.pane);
     addHairFolders(hairFolder, this.hairParams, sync);
   }
 

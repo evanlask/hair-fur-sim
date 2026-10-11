@@ -39,7 +39,7 @@ export class MusicPanel {
 
   constructor(gui: Gui) {
     const p = this.player;
-    const f = (this.folder = gui.folder('Music', true));
+    const f = (this.folder = gui.folder('Music'));
     f.addBinding(this.ui, 'status', { readonly: true, label: 'status' });
     this.playButton = f.addButton({ title: '▶ Play' });
     this.playButton.on('click', () => this.togglePlay());

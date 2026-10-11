@@ -50,7 +50,9 @@ export class MulletExample implements Example {
       business: { ...this.params.business.shading },
       party: { ...this.params.party.shading },
     };
+    await ctx.loading.step('Loading head scan…');
     await loadHead();
+    await ctx.loading.step('Growing hair…');
     this.character = await MulletCharacter.create({
       name: 'wayne',
       hair,
@@ -89,7 +91,7 @@ export class MulletExample implements Example {
       for (const grp of this.character.hair.groups) grp.syncParams();
       this.character.scalpTint.value.set(this.params.business.shading.rootColor);
     };
-    const f = gui.folder('Wayne', true);
+    const f = gui.folder('Wayne');
     const motionBinding = f
       .addBinding(this.settings, 'motion', {
         options: {
@@ -121,11 +123,11 @@ export class MulletExample implements Example {
       f,
       this.settings,
       'amount',
-      { min: 0, max: 1.6, label: 'amount' },
+      { min: 0, max: 2, label: 'amount' },
       () => (this.character.amount = this.settings.amount),
     );
 
-    const hairFolder = gui.folder('Hair', true);
+    const hairFolder = gui.folder('Hair');
     hairFolder
       .addBinding(this.settings, 'hairColor', { label: 'hair color', options: hairColorOptions() })
       .on('change', () => {
@@ -203,7 +205,7 @@ export class MulletExample implements Example {
     );
 
     // Wind is shared by both groups, so it sits above their tabs.
-    addWindFolder(hairFolder);
+    addWindFolder(gui.pane);
     // Each groom group has its own Basics and folders, switched with tabs.
     const groups = hairFolder.addTab({ pages: [{ title: 'Business (top)' }, { title: 'Party (back)' }] });
     (['business', 'party'] as const).forEach((k, i) => {

@@ -13,7 +13,7 @@ import {
   type FoxGroomParams,
 } from './FoxCharacter';
 import { FoxPath, MAX_WOBBLE } from './FoxPath';
-import { GrassField, createGrassParams, type GrassParams } from './Grass';
+import { GRASS_PANEL, GrassField, createGrassParams, type GrassParams } from './Grass';
 
 /** Default fur tuning (shared by every fox so the GUI drives all of them). */
 export function createFoxFurParams(substeps: number): HairParamsData {
@@ -77,16 +77,17 @@ export class FoxExample implements Example {
   private readonly groom: FoxGroomParams = defaultFoxGroom();
   private grass: GrassField | null = null;
   private grassParams!: GrassParams;
-  private readonly grassStyle = defaultGrassStyle();
+  /** A fresh seed per load, so the tufts, bare patches and stalk drifts land somewhere new each time. */
+  private readonly grassStyle = { ...defaultGrassStyle(), seed: (Math.random() * 2 ** 31) | 0 };
   /** One loop for every fox: they walk it at opposite angles, so they never meet. */
   private readonly path = new FoxPath(5);
   private readonly settings = {
     animation: 'Walk' as FoxAnimation,
     moving: true,
     speed: 1,
-    pathRadius: 1.3,
+    pathRadius: 2.2,
     pathWiggle: 1,
-    twoFoxes: false,
+    twoFoxes: true,
     showBody: true,
     showStrands: true,
     showGuides: false,
@@ -107,10 +108,10 @@ export class FoxExample implements Example {
     const { app, gui, lights, quality } = ctx;
     this.params = createFoxFurParams(quality.substeps);
     this.grassParams = createGrassParams(quality.substeps, quality.strandScale);
-    app.camera.position.set(2.6, 1.5, 2.9);
+    app.camera.position.set(3.6, 2, 4);
     app.controls.target.set(0, 0.35, 0);
     lights.focus.set(0, 0.4, 0);
-    lights.focusRadius = 2.2;
+    lights.focusRadius = 3.2;
     lights.update();
     // A light crosswind (relative to the camera), so gusts roll across the grass.
     Object.assign(hairWind.params, {
@@ -124,11 +125,14 @@ export class FoxExample implements Example {
       gustPeriod: 6,
     });
     hairWind.sync();
+    await ctx.loading.step('Loading fox model…');
     await loadFox();
+    await ctx.loading.step('Growing fur…');
     await this.respawn();
+    await ctx.loading.step('Growing grass…');
     this.setGrass(this.settings.grass);
 
-    const f = gui.folder('Fox', true);
+    const f = gui.folder('Fox');
     f.addBinding(this.settings, 'animation', {
       label: 'motion',
       options: { survey: 'Survey', walk: 'Walk', run: 'Run' },
@@ -143,7 +147,7 @@ export class FoxExample implements Example {
       () => this.foxes.forEach((fx) => (fx.moving = this.settings.moving)),
       'follow path',
     );
-    num(f, this.settings, 'pathRadius', { min: 0.6, max: 3, label: 'path radius' }, () => {
+    num(f, this.settings, 'pathRadius', { min: 0.6, max: 4, label: 'path radius (m)' }, () => {
       this.path.radius = this.settings.pathRadius;
     });
     num(
@@ -154,7 +158,7 @@ export class FoxExample implements Example {
         min: 0,
         max: 1.5,
         label: 'path wiggle',
-        hint: `How much the loop wanders in and out (0 = a circle; at most ±${Math.round(MAX_WOBBLE * 150)}% of the radius). Two foxes walk it on roughly opposite sides, so they never meet.`,
+        hint: `How much the loop wanders in and out (0 = a circle; at most ±${Math.round(MAX_WOBBLE * 150)}% of the radius). Two foxes start on opposite sides and drift closer and apart, sometimes one right behind the other, but never touch.`,
       },
       () => {
         this.path.wiggle = this.settings.pathWiggle;
@@ -163,12 +167,17 @@ export class FoxExample implements Example {
     f.addButton({ title: 'New path' }).on('click', () => this.path.reseed((Math.random() * 2 ** 31) | 0));
     toggle(f, this.settings, 'twoFoxes', () => void this.respawn(), 'two foxes');
 
-    const grass = gui.folder('Grass', true);
+    const grass = gui.folder('Grass');
     toggle(
       grass,
       this.settings,
       'grass',
-      () => this.setGrass(this.settings.grass),
+      () => {
+        // Growing takes seconds; removing is instant. Reads the setting when it runs, in case it flipped back.
+        const apply = () => this.setGrass(this.settings.grass);
+        if (this.settings.grass) void this.ctx.loading.busy('Growing grass…', apply);
+        else apply();
+      },
       'grass',
       'Prairie grass on the ground, simulated like hair.',
     );
@@ -177,7 +186,7 @@ export class FoxExample implements Example {
       grass,
       this.grassStyle,
       'height',
-      { min: 0.3, max: 2.5, label: 'grass height', hint: 'Length of the short grass (regrows it).' },
+      { min: 0.3, max: 2, digits: 2, label: 'grass height', hint: 'Length of the short grass (regrows it).' },
       regrow,
     );
     num(
@@ -186,7 +195,8 @@ export class FoxExample implements Example {
       'stalkHeight',
       {
         min: 0.3,
-        max: 1.6,
+        max: 2,
+        digits: 2,
         label: 'stalk height',
         hint: 'Length of the tall seed stalks (regrows the grass).',
       },
@@ -204,13 +214,17 @@ export class FoxExample implements Example {
       },
       regrow,
     );
+    grass.addButton({ title: 'New field' }).on('click', () => {
+      this.grassStyle.seed = (Math.random() * 2 ** 31) | 0;
+      this.scheduleGrassRegroom();
+    });
     num(
       grass,
       this.settings,
       'pushRadius',
       {
         min: 0,
-        max: 3,
+        max: 2,
         label: 'fox push radius',
         hint: 'Size of the shapes the foxes push the grass aside with.',
       },
@@ -242,25 +256,21 @@ export class FoxExample implements Example {
       'lodDistance',
       {
         min: 0,
-        max: 12,
+        max: 20,
         label: 'thin beyond (m)',
         hint: 'Faster: beyond this distance from the camera, blades thin out (the rest get wider, so the ground stays covered). 0 = off.',
       },
       syncLod,
     );
     // Both layers feel the same wind (the Wind folder) with their own tuning.
-    const layers = grass.addFolder({ title: 'Grass & stalk settings', expanded: false });
-    const tabs = layers.addTab({ pages: [{ title: 'Grass' }, { title: 'Stalks' }] });
+    const tabs = grass.addTab({ pages: [{ title: 'Grass' }, { title: 'Stalks' }] });
     const syncGrass = () => this.grass?.syncParams();
     (['grass', 'stalks'] as const).forEach((k, i) => {
-      addHairBasics(tabs.pages[i], this.grassParams[k], syncGrass);
-      addHairFolders(tabs.pages[i], this.grassParams[k], syncGrass);
+      addHairBasics(tabs.pages[i], this.grassParams[k], syncGrass, GRASS_PANEL);
+      addHairFolders(tabs.pages[i], this.grassParams[k], syncGrass, GRASS_PANEL);
     });
 
-    // The wind moves both the fur and the grass.
-    addWindFolder(gui.pane);
-
-    const fur = gui.folder('Fur', true);
+    const fur = gui.folder('Fur');
     const sync = () => this.syncAll();
     addHairBasics(fur, this.params, sync);
     const g = gui.folder('Groom (regrows fur)', false, fur);
@@ -284,7 +294,7 @@ export class FoxExample implements Example {
       g,
       this.groom,
       'guideCount',
-      { min: 200, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
+      { min: 100, max: 8000, step: 50, label: 'guide count', hint: 'Simulated guide hairs.' },
       rebuild,
     );
     num(g, this.groom, 'strandCount', { min: 5000, max: 500000, step: 5000, label: 'strand count' }, rebuild);
@@ -316,6 +326,9 @@ export class FoxExample implements Example {
     );
 
     addHairFolders(fur, this.params, sync);
+
+    // The wind moves both the fur and the grass.
+    addWindFolder(gui.pane);
   }
 
   viewControls(f: FolderApi): void {
@@ -372,7 +385,10 @@ export class FoxExample implements Example {
 
   private scheduleGrassRegroom(): void {
     clearTimeout(this.grassTimer);
-    this.grassTimer = window.setTimeout(() => this.grass?.regroom(), 300);
+    this.grassTimer = window.setTimeout(() => {
+      const grass = this.grass;
+      if (grass) void this.ctx.loading.busy('Regrowing grass…', () => grass.regroom());
+    }, 300);
   }
 
   private syncAll(): void {

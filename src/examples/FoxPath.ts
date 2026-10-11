@@ -4,8 +4,11 @@ import { Rng } from '../util/rng';
 
 /** Total radius wobble (fraction of the radius) at wiggle 1. */
 export const MAX_WOBBLE = 0.22;
-/** Most the angle between two foxes strays from opposite (π) as they drift ahead and fall back (rad). */
-export const MAX_STAGGER = 0.7;
+/**
+ * Closest two foxes come, centre to centre (m). A fox is about 1 m from snout to tail tip, so this lets one walk
+ * right behind the other with a small gap.
+ */
+export const MIN_SEPARATION = 1.15;
 /** Peak fraction by which a fox speeds up or slows down while drifting. */
 const SPEED_VARIATION = 0.1;
 
@@ -21,10 +24,11 @@ interface Wave {
  * A wobbly closed loop the foxes walk: a circle whose radius varies with angle (a few smooth harmonics that
  * slowly drift). Each direction from the centre meets the loop once, so it never crosses itself.
  *
- * Fox 0 and fox 1 walk it on roughly opposite sides; their angles drift ahead of and behind that by a slow,
- * bounded wave, so each speeds up and slows down a little. Their angle apart stays within π ± MAX_STAGGER, so
- * they are always at least r_min·√(2 + 2·cos MAX_STAGGER) apart (r_min = radius·(1 − wiggle·MAX_WOBBLE)) and
- * never pass each other.
+ * Fox 0 and fox 1 start on opposite sides; their angles drift ahead of and behind that by a slow, bounded wave,
+ * so each speeds up and slows down a little and now and then one closes up behind the other. Their angle apart
+ * stays within π ± maxStagger(), the most that keeps them MIN_SEPARATION apart on the loop's smallest radius
+ * r_min = radius·(1 − wiggle·MAX_WOBBLE) (on a loop too small for that, they stay opposite, 2·r_min apart), so
+ * they never touch or pass each other.
  */
 export class FoxPath {
   readonly center = new THREE.Vector3();
@@ -100,19 +104,29 @@ export class FoxPath {
     ];
   }
 
-  /** Fox 0 drifts back as fox 1 drifts ahead, each by up to half of MAX_STAGGER. */
+  /**
+   * Most the angle between the foxes strays from opposite (rad): two points at least r_min from the centre and Δ
+   * apart in angle are at least 2·r_min·sin(Δ/2) apart, so Δ may shrink to where that equals MIN_SEPARATION.
+   */
+  maxStagger(): number {
+    const rMin = this.radius * (1 - this.wiggle * MAX_WOBBLE);
+    const minAngle = 2 * Math.asin(Math.min(1, MIN_SEPARATION / (2 * rMin)));
+    return Math.PI - minAngle;
+  }
+
+  /** Fox 0 drifts back as fox 1 drifts ahead, each by up to half of maxStagger(). */
   private sign(fox: number): number {
     return fox % 2 === 0 ? -0.5 : 0.5;
   }
 
   /** Angle on the loop of fox `fox` (0 or 1). */
   foxAngle(fox: number): number {
-    return this.angle + fox * Math.PI + this.sign(fox) * MAX_STAGGER * this.wave()[0];
+    return this.angle + fox * Math.PI + this.sign(fox) * this.maxStagger() * this.wave()[0];
   }
 
   /** Angular rate (rad/s) of fox `fox` in the last advance. */
   foxRate(fox: number): number {
-    return this.rate + this.sign(fox) * MAX_STAGGER * this.wave()[1] * this.staggerRate;
+    return this.rate + this.sign(fox) * this.maxStagger() * this.wave()[1] * this.staggerRate;
   }
 
   /** Advances the shared clock so `count` foxes average `speed` m/s along the loop. */
@@ -127,8 +141,9 @@ export class FoxPath {
     for (let i = 0; i < count; i++) stride += this.stride(this.foxAngle(i));
     this.rate = speed / (stride / count);
     // Paced by the walking speed, so a fox's speed varies by about ±SPEED_VARIATION at any speed or radius
-    // (|wave'| ≤ 1.21, and stride ≈ radius).
-    this.staggerRate = (SPEED_VARIATION * speed) / (0.5 * MAX_STAGGER * 1.21 * this.radius);
+    // (|wave'| ≤ 1.21, and stride ≈ radius). With no room to stagger the wave doesn't matter.
+    const stagger = this.maxStagger();
+    this.staggerRate = stagger > 1e-6 ? (SPEED_VARIATION * speed) / (0.5 * stagger * 1.21 * this.radius) : 0;
     this.angle += this.rate * dt;
     this.staggerPhase += this.staggerRate * dt;
   }

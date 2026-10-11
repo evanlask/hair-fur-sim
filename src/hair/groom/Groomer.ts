@@ -306,23 +306,47 @@ function bindStrands(
   guides: GuideData,
   rng: Rng,
 ): StrandData {
-  const roots: { p: SurfacePoint; g: [number, number, number]; w: [number, number, number] }[] = [];
+  // Roots in sampling order, packed flat: a field binds a million of them, so no per-root objects.
+  const rootTri = new Uint32Array(target);
+  const rootUvw = new Float32Array(target * 3);
+  const rootColor = new Uint32Array(target);
+  const rootGuides = new Uint32Array(target * 3);
+  const rootWeights = new Float32Array(target * 3);
+  /** Weighted guide length, before the per-strand length variation. */
+  const rootLength = new Float64Array(target);
   const sp = createSurfacePoint();
-  const cand: { id: number; d2: number }[] = [];
+  // The 3 nearest candidates, kept sorted (ties keep visiting order) instead of collecting and sorting them all.
+  const nearId = [0, 0, 0];
+  const nearD2 = [0, 0, 0];
+  let nCand = 0;
+  const visit = (id: number, d2: number) => {
+    // The normal test skips guides on the far side of thin features (the other face of an ear).
+    if (guidePoints[id].normal.dot(sp.normal) <= 0.1) return;
+    nCand++;
+    let k = Math.min(nCand, 3) - 1;
+    if (nCand > 3 && d2 >= nearD2[2]) return;
+    for (; k > 0 && d2 < nearD2[k - 1]; k--) {
+      nearId[k] = nearId[k - 1];
+      nearD2[k] = nearD2[k - 1];
+    }
+    nearId[k] = id;
+    nearD2[k] = d2;
+  };
+  // Inverse squared distance weights; eps keeps a root sitting on a guide from dominating with infinity.
+  const eps = guideHash.cellSize * guideHash.cellSize * 0.01;
+  const w = [0, 0, 0];
+  let N = 0;
   let attempts = 0;
-  while (roots.length < target && attempts < target * 40) {
+  while (N < target && attempts < target * 40) {
     attempts++;
     if (!sampler.sample(rng, sp) || !accept(style, group, sp, rng)) continue;
-    cand.length = 0;
-    // Widen the search until there are 3 candidates. The normal test skips guides on the far side of thin
-    // features (the other face of an ear).
-    for (let ring = 1; ring <= 4 && cand.length < 3; ring++) {
-      cand.length = 0;
-      guideHash.forEachNear(sp.position.x, sp.position.y, sp.position.z, ring, (id, d2) => {
-        if (guidePoints[id].normal.dot(sp.normal) > 0.1) cand.push({ id, d2 });
-      });
+    // Widen the search until there are 3 candidates.
+    nCand = 0;
+    for (let ring = 1; ring <= 4 && nCand < 3; ring++) {
+      nCand = 0;
+      guideHash.forEachNear(sp.position.x, sp.position.y, sp.position.z, ring, visit);
     }
-    if (cand.length === 0) {
+    if (nCand === 0) {
       // Fall back to any guide (brute force) for isolated islands.
       let best = -1;
       let bestD = Infinity;
@@ -334,26 +358,31 @@ function bindStrands(
         }
       }
       if (best < 0) continue;
-      cand.push({ id: best, d2: bestD });
+      nCand = 1;
+      nearId[0] = best;
+      nearD2[0] = bestD;
     }
-    cand.sort((a, b) => a.d2 - b.d2);
-    const g: [number, number, number] = [
-      cand[0].id,
-      cand[Math.min(1, cand.length - 1)].id,
-      cand[Math.min(2, cand.length - 1)].id,
-    ];
-    // Inverse squared distance weights; eps keeps a root sitting on a guide from dominating with infinity.
-    const eps = guideHash.cellSize * guideHash.cellSize * 0.01;
-    const w: [number, number, number] = [0, 0, 0];
+    const n = Math.min(nCand, 3);
     for (let k = 0; k < 3; k++) {
-      if (k >= cand.length) continue;
-      w[k] = 1 / (cand[k].d2 + eps);
+      rootGuides[N * 3 + k] = nearId[Math.min(k, n - 1)];
+      w[k] = k < n ? 1 / (nearD2[k] + eps) : 0;
     }
     const sum = w[0] + w[1] + w[2];
-    roots.push({ p: copySurfacePoint(sp, createSurfacePoint()), g, w: [w[0] / sum, w[1] / sum, w[2] / sum] });
+    let L = 0;
+    for (let k = 0; k < 3; k++) {
+      const wk = w[k] / sum;
+      rootWeights[N * 3 + k] = wk;
+      L += wk * guides.rootBary[rootGuides[N * 3 + k] * 4 + 3];
+    }
+    rootLength[N] = L;
+    rootTri[N] = sp.tri;
+    rootUvw[N * 3] = sp.u;
+    rootUvw[N * 3 + 1] = sp.v;
+    rootUvw[N * 3 + 2] = sp.w;
+    rootColor[N] = packColor(style.color?.(sp, group) ?? null);
+    N++;
   }
 
-  const N = roots.length;
   // Shuffled so any prefix is a uniform subset: LOD thinning only draws the first strands.
   const order = shuffledIndices(N, rng);
   const out: StrandData = {
@@ -365,27 +394,21 @@ function bindStrands(
     rootBary: new Float32Array(N * 4),
   };
   for (let i = 0; i < N; i++) {
-    const r = roots[order[i]];
-    const lam = 1 - spec.lengthVariation * rng.next();
-    const L =
-      lam *
-      (r.w[0] * guides.rootBary[r.g[0] * 4 + 3] +
-        r.w[1] * guides.rootBary[r.g[1] * 4 + 3] +
-        r.w[2] * guides.rootBary[r.g[2] * 4 + 3]);
+    const r = order[i];
+    const L = (1 - spec.lengthVariation * rng.next()) * rootLength[r];
     const width = 1 + spec.widthVariation * (rng.next() * 2 - 1);
-    const tri = r.p.tri;
-    out.guides.set([r.g[0], r.g[1], r.g[2], rng.uint()], i * 4);
-    out.weights.set([r.w[0], r.w[1], r.w[2], L], i * 4);
-    out.rootTri.set(
-      [
-        mesh.indices[tri * 3],
-        mesh.indices[tri * 3 + 1],
-        mesh.indices[tri * 3 + 2],
-        packColor(style.color?.(r.p, group) ?? null),
-      ],
-      i * 4,
-    );
-    out.rootBary.set([r.p.u, r.p.v, r.p.w, Math.max(0.05, width)], i * 4);
+    const tri = rootTri[r];
+    const o = i * 4;
+    for (let k = 0; k < 3; k++) {
+      out.guides[o + k] = rootGuides[r * 3 + k];
+      out.weights[o + k] = rootWeights[r * 3 + k];
+      out.rootTri[o + k] = mesh.indices[tri * 3 + k];
+      out.rootBary[o + k] = rootUvw[r * 3 + k];
+    }
+    out.guides[o + 3] = rng.uint();
+    out.weights[o + 3] = L;
+    out.rootTri[o + 3] = rootColor[r];
+    out.rootBary[o + 3] = Math.max(0.05, width);
   }
   return out;
 }

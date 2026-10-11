@@ -3,6 +3,7 @@ import type { FolderApi } from 'tweakpane';
 import type { App, FrameInfo } from '../app/App';
 import type { Gui } from '../app/Gui';
 import type { LightRig } from '../app/LightRig';
+import type { Loading } from '../app/Loading';
 import type { QualityPreset } from '../app/quality';
 import type { HairSystem } from '../hair/HairSystem';
 
@@ -12,6 +13,8 @@ export interface ExampleContext {
   gui: Gui;
   lights: LightRig;
   quality: QualityPreset;
+  /** Call `loading.step(label)` before each slow startup stage, `loading.busy()` around later regrooms. */
+  loading: Loading;
 }
 
 export interface Example {

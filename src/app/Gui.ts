@@ -1,4 +1,3 @@
-import * as EssentialsPlugin from '@tweakpane/plugin-essentials';
 import { Pane, type BladeApi, type FolderApi, type TabPageApi } from 'tweakpane';
 
 import type { HairSystem } from '../hair/HairSystem';
@@ -21,19 +20,12 @@ export interface NumberSpec {
   hint?: string;
 }
 
-/** Tweakpane pane, plus the essentials plugin for its FPS graph. */
+/** Tweakpane pane. Frame timing lives in the stats overlay, not here. */
 export class Gui {
   readonly pane: Pane;
-  readonly fps: EssentialsPlugin.FpsGraphBladeApi;
 
   constructor() {
     this.pane = new Pane({ title: 'Hair & Fur Simulation', expanded: true });
-    this.pane.registerPlugin(EssentialsPlugin);
-    this.fps = this.pane.addBlade({
-      view: 'fpsgraph',
-      label: 'fps',
-      rows: 2,
-    }) as EssentialsPlugin.FpsGraphBladeApi;
   }
 
   folder(title: string, expanded = false, parent: Container = this.pane): FolderApi {
@@ -147,15 +139,15 @@ export function addSimulationControls(c: Container, app: App, hair: HairSystem):
 }
 
 /**
- * Wind, felt by every hair group (each group's `air drag` sets how much it reacts). Examples add it to their
- * Hair / Fur folder, next to the per-group folders.
+ * Wind, felt by every hair group (each group's `air drag` sets how much it reacts). A scene setting, so examples
+ * add it at the top level, after their hair folders.
  */
 export function addWindFolder(parent: Container): FolderApi {
   const w = hairWind.params;
   const sync = () => hairWind.sync();
   const wind = parent.addFolder({ title: 'Wind', expanded: false });
   toggle(wind, w, 'enabled', sync, 'enabled', 'Turn the wind on or off.');
-  num(wind, w, 'strength', { min: 0, max: 20, label: 'speed (m/s)', hint: 'Wind speed.' }, sync);
+  num(wind, w, 'strength', { min: 0, max: 12, label: 'speed (m/s)', hint: 'Wind speed.' }, sync);
   num(
     wind,
     w,
@@ -284,7 +276,7 @@ const HAIR_CONTROLS = {
   }),
   drag: n('physics', {
     min: 0,
-    max: 20,
+    max: 10,
     label: 'air drag',
     hint: 'Air resistance (per second): slows strands moving through the air and sets how strongly wind pushes them.',
   }),
@@ -302,12 +294,12 @@ const HAIR_CONTROLS = {
   }),
   gravity: {
     kind: 'gravity',
-    spec: { min: 0, max: 30, label: 'gravity (m/s²)', hint: 'Strength of gravity (Earth = 9.81).' },
+    spec: { min: 0, max: 20, label: 'gravity (m/s²)', hint: 'Strength of gravity (Earth = 9.81).' },
   },
   // physics: collision
   collisionMargin: n('physics', {
     min: 0,
-    max: 30,
+    max: 15,
     scale: 1000,
     label: 'margin (mm)',
     hint: 'Gap kept between the hair and the body.',
@@ -358,7 +350,7 @@ const HAIR_CONTROLS = {
   }),
   maxVelocity: n('physics', {
     min: 0.5,
-    max: 50,
+    max: 30,
     label: 'max speed (m/s)',
     hint: 'Speed limit for strand points; keeps very fast motion stable.',
   }),
@@ -379,7 +371,7 @@ const HAIR_CONTROLS = {
   }),
   curlTurns: n('style', {
     min: 0,
-    max: 40,
+    max: 20,
     label: 'curl turns',
     hint: 'Number of curl turns along a strand.',
   }),
@@ -391,20 +383,20 @@ const HAIR_CONTROLS = {
   }),
   frizz: n('style', {
     min: 0,
-    max: 20,
+    max: 8,
     scale: 1000,
     label: 'frizz (mm)',
     hint: 'Random flyaway offset of each strand.',
   }),
   frizzFrequency: n('style', {
     min: 0.5,
-    max: 30,
+    max: 15,
     label: 'frizz detail',
     hint: 'How fine the frizz is: more waves along each strand.',
   }),
   rootWidth: n('style', {
     min: 0.02,
-    max: 3,
+    max: 1.5,
     scale: 1000,
     digits: 3,
     label: 'root width (mm)',
@@ -412,7 +404,7 @@ const HAIR_CONTROLS = {
   }),
   tipWidth: n('style', {
     min: 0,
-    max: 3,
+    max: 1,
     scale: 1000,
     digits: 3,
     label: 'tip width (mm)',
@@ -439,7 +431,7 @@ const HAIR_CONTROLS = {
   },
   lodStrandsPerPixel: n('style', {
     min: 0.5,
-    max: 40,
+    max: 20,
     label: 'LOD threshold',
     hint: 'On-screen strand density (strands per pixel) at which auto LOD starts thinning.',
   }),
@@ -535,7 +527,7 @@ const HAIR_CONTROLS = {
   }),
   selfShadowDensity: n('shading', {
     min: 0,
-    max: 5000,
+    max: 1000,
     label: 'self-shadow',
     hint: 'How strongly the hair shadows itself: deep layers get darker.',
   }),
@@ -559,7 +551,17 @@ const HAIR_CONTROLS = {
   }),
 } satisfies Record<string, HairControl>;
 
-type HairControlId = keyof typeof HAIR_CONTROLS;
+export type HairControlId = keyof typeof HAIR_CONTROLS;
+/** Per-group changes to the shared hair panel, for grooms that aren't hair (grass). */
+export interface HairPanelOptions {
+  /**
+   * Slider ranges that replace the shared ones, for grooms on a different scale from hair (grass blades are
+   * millimetres wide). Everything else keeps the shared ranges, so hair panels stay comparable.
+   */
+  ranges?: Partial<Record<HairControlId, Pick<NumberSpec, 'min' | 'max'>>>;
+  /** Controls left out because they do nothing for this groom (no body, no curls). */
+  hide?: HairControlId[];
+}
 type Layout = (HairControlId | '---' | `# ${string}`)[];
 
 const BASICS: Layout = [
@@ -687,10 +689,12 @@ class HairControls {
 
   private readonly params: HairParamsData;
   private readonly onChange: () => void;
+  private readonly options: HairPanelOptions;
 
-  constructor(params: HairParamsData, onChange: () => void) {
+  constructor(params: HairParamsData, onChange: () => void, options: HairPanelOptions) {
     this.params = params;
     this.onChange = onChange;
+    this.options = options;
     this.defaults = structuredClone(params);
   }
 
@@ -698,7 +702,7 @@ class HairControls {
     for (const item of layout) {
       if (item === '---') c.addBlade({ view: 'separator' });
       else if (item.startsWith('# ')) heading(c, item.slice(2));
-      else this.add(c, item as HairControlId);
+      else if (!this.options.hide?.includes(item as HairControlId)) this.add(c, item as HairControlId);
     }
   }
 
@@ -706,11 +710,12 @@ class HairControls {
     const ctl: HairControl = HAIR_CONTROLS[id];
     const changed = () => this.changed(id);
     let b: Binding;
+    const range = this.options.ranges?.[id];
     if (ctl.kind === 'gravity') {
-      b = num(c, gravityStrength(this.params), 'v', ctl.spec, changed);
+      b = num(c, gravityStrength(this.params), 'v', { ...ctl.spec, ...range }, changed);
     } else {
       const obj = this.params[ctl.section] as unknown as Record<string, unknown>;
-      if (ctl.kind === 'num') b = num(c, obj, id, ctl.spec, changed);
+      if (ctl.kind === 'num') b = num(c, obj, id, { ...ctl.spec, ...range }, changed);
       else if (ctl.kind === 'toggle') b = toggle(c, obj, id, changed, ctl.label, ctl.hint);
       else b = colorBinding(c, obj, id, changed, ctl.label, ctl.hint);
     }
@@ -744,24 +749,34 @@ class HairControls {
 
 const controlsByParams = new WeakMap<HairParamsData, HairControls>();
 
-function controlsFor(params: HairParamsData, onChange: () => void): HairControls {
+function controlsFor(params: HairParamsData, onChange: () => void, options: HairPanelOptions): HairControls {
   let ctl = controlsByParams.get(params);
   if (!ctl) {
-    ctl = new HairControls(params, onChange);
+    ctl = new HairControls(params, onChange, options);
     controlsByParams.set(params, ctl);
   }
   return ctl;
 }
 
 /** The most useful sliders of a hair group, shown right in its folder (they also appear in the folders below). */
-export function addHairBasics(c: Container, params: HairParamsData, onChange: () => void): void {
+export function addHairBasics(
+  c: Container,
+  params: HairParamsData,
+  onChange: () => void,
+  options: HairPanelOptions = {},
+): void {
   heading(c, 'Basics');
-  controlsFor(params, onChange).build(c, BASICS);
+  controlsFor(params, onChange, options).build(c, BASICS);
 }
 
 /** Motion / Strand shape / Color & shine / Performance folders for a hair group, and a reset button. */
-export function addHairFolders(c: Container, params: HairParamsData, onChange: () => void): void {
-  const ctl = controlsFor(params, onChange);
+export function addHairFolders(
+  c: Container,
+  params: HairParamsData,
+  onChange: () => void,
+  options: HairPanelOptions = {},
+): void {
+  const ctl = controlsFor(params, onChange, options);
   for (const [title, layout] of FOLDERS) ctl.build(c.addFolder({ title, expanded: false }), layout);
   c.addButton({ title: 'Reset these hair settings' }).on('click', () => ctl.reset());
 }

@@ -110,7 +110,8 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
       // Per-strand culling (large grooms like grass): skip strands whose root is outside the view, padded by
       // the strand length plus a margin so blades just off screen still cast shadows into view, and thin
       // strands out beyond lodDistance (strands are shuffled, so the index rank is a uniform random number),
-      // widening the survivors to keep the coverage. Thinned strands shrink to nothing before they go.
+      // widening the survivors to keep the coverage. Thinned strands shrink to nothing before they go. The kept
+      // fraction falls as distance^-1.5 rather than the ^-2 that keeps on-screen density constant: a gentler thinning.
       const pad = Ls.add(0.4).negate();
       let inView: N = dot(view.frustumPlanes.element(0).xyz, root)
         .add(view.frustumPlanes.element(0).w)
@@ -123,7 +124,7 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
       const camDist = max(length(root.sub(view.cameraPos)), 1e-3);
       const keep = select(
         U.lodDistance.greaterThan(0),
-        clamp(pow(U.lodDistance.div(camDist), 2), 0.02, 1),
+        clamp(pow(U.lodDistance.div(camDist), 1.5), 0.02, 1),
         float(1),
       ).toVar();
       const rank = float(s)

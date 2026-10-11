@@ -27,7 +27,7 @@ export const defaultLightParams = (): LightParams => ({
   keyElevation: 45,
   keyIntensity: 3.2,
   keyColor: '#fff3e6',
-  rimAzimuth: 200,
+  rimAzimuth: -160,
   rimElevation: 30,
   rimIntensity: 2.6,
   rimColor: '#cfe2ff',
@@ -64,7 +64,6 @@ export class LightRig {
     this.rim.name = 'rim';
     this.fill.name = 'fill';
     this.key.castShadow = true;
-    this.key.shadow.bias = -0.0004;
     this.key.shadow.normalBias = 0;
     this.key.shadow.radius = 2;
     this.apply();
@@ -111,7 +110,13 @@ export class LightRig {
     cam.top = r;
     cam.bottom = -r;
     cam.near = Math.max(0.01, dist - r * 2);
-    cam.far = dist + r * 2;
+    // Reach far enough to cover the floor (y = 0) under the whole frustum, or shadows cast onto it
+    // from above the focus fall past the far plane. Capped for grazing lights (floor radius is 12).
+    const sinEl = Math.max(Math.sin(THREE.MathUtils.degToRad(p.keyElevation)), 0.05);
+    const toFloor = Math.min((Math.max(this.focus.y, 0) + r) / sinEl, 12);
+    cam.far = dist + Math.max(r * 2, toFloor);
+    // Bias is in normalized depth; rescale so it stays the same world distance as the depth range grows.
+    this.key.shadow.bias = (-0.0004 * (r * 4)) / (cam.far - cam.near);
     cam.updateProjectionMatrix();
   }
 }

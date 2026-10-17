@@ -33,6 +33,11 @@ export interface HairInstanceOptions {
   boundsObject?: THREE.Object3D;
   /** Hair shadow map size (px); defaults to HairSystem.shadowResolution. Large grooms (a field) need more. */
   shadowResolution?: number;
+  /**
+   * Draw, shade and shadow only the strands that survive culling and the view LOD (see StrandCompaction), for
+   * grooms where most strands are culled at any time (a field). Off by default.
+   */
+  compactStrands?: boolean;
 }
 
 /** Injected by HairSystem.createInstance. */
@@ -187,6 +192,7 @@ export class HairInstance {
       shadowMap: this.shadowMap,
       shadowLayer: this.shadowLayer,
       release: this.services.release,
+      compactStrands: this.opts.compactStrands,
     });
   }
 

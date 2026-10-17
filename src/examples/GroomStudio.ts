@@ -6,6 +6,7 @@ import { addWindFolder, alphabetical, num, tip, toggle } from '../app/Gui';
 import { DragSpring } from '../app/Interaction';
 import { count } from '../app/Stats';
 import type { FieldName } from '../hair/groom/styles/paintedStyle';
+import { modHeld } from '../util/platform';
 import type { Example, ExampleContext } from './Example';
 import { MAP_LENGTH_MAX, TOOL_CHANNELS, isShapeTool, type PaintTool, type Tool } from './studio/brushes';
 import { curvesUsda, type CurveExport, type LayerCurves } from './studio/curveExport';
@@ -997,7 +998,7 @@ export class GroomStudioExample implements Example {
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
     const k = e.key.toLowerCase();
-    if (e.metaKey || e.ctrlKey) {
+    if (modHeld(e)) {
       if (k === 'z') {
         e.preventDefault();
         if (e.shiftKey) this.redo();
@@ -1016,7 +1017,8 @@ export class GroomStudioExample implements Example {
       }
       return;
     }
-    if (e.altKey) return;
+    // The other modifier (Ctrl on a Mac, Windows/Super elsewhere) isn't a shortcut: don't take it as a plain key.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     // Hold Space to navigate with any tool (a focused button would also take it as a click).
     if (k === ' ') {
       e.preventDefault();
@@ -1109,6 +1111,7 @@ export class GroomStudioExample implements Example {
     if (!e.shiftKey) return false;
     switch (k) {
       case 'a':
+        e.preventDefault(); // the name field takes focus, and would get the A
         this.addLayer();
         return true;
       case 'd':
@@ -1136,7 +1139,7 @@ export class GroomStudioExample implements Example {
   /** ⌘ / Ctrl held as a drag starts: in Navigate, a drag on the bust grabs it instead of orbiting. */
   private grabKey = false;
   private readonly noteGrabKey = (e: PointerEvent) => {
-    this.grabKey = e.ctrlKey || e.metaKey;
+    this.grabKey = modHeld(e);
   };
 
   /** Brings the whole head into view from where the camera looks now (F, as in most 3D tools). */

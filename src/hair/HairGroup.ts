@@ -14,6 +14,7 @@ import {
   hairRenderSettings,
 } from './render/HairMaterial';
 import type { HairShadowMap } from './render/HairShadowPass';
+import { StrandCompaction } from './sim/compact';
 import type { GroupContext } from './sim/context';
 import type { GrowthDeformer } from './sim/deform';
 import { buildInterpolateKernel } from './sim/interpolate';
@@ -84,7 +85,12 @@ export interface HairGroupOptions {
   shadowMap: HairShadowMap;
   shadowLayer: number;
   release: ReleaseBuffers;
+  /** Draw and shade only the strands interpolate keeps (see StrandCompaction). Off: every strand, as before. */
+  compactStrands?: boolean;
 }
+
+/** `instancedArray` with a loosely typed item type. */
+const storageArray = instancedArray as unknown as (count: number | ArrayBufferView, type: string) => N;
 
 /** Fraction of drawn strands rendered into the hair shadow map (wider to compensate). */
 export const SHADOW_STRAND_FRACTION = 0.35;
@@ -134,6 +140,27 @@ export class HairGroup {
     const st = (this.staticBuffers = getStatic(data));
     this.profileData = new Float32Array(G * 4);
     this.profile = instancedArray(this.profileData, 'vec4') as N;
+    // three.js keeps a CPU copy of every storage buffer. The compacted path's GPU-only buffers start as zeros and
+    // are never written from the CPU, so they all share one zero-filled block instead of one copy each.
+    const zeros = opts.compactStrands ? new ArrayBuffer(Math.max(Ns * R * 16, (3 * Ns + 4) * 4)) : null;
+    const gpuOnly = (n: number, type: 'vec4' | 'uvec4' | 'vec2' | 'uint', init?: () => N): N => {
+      if (!zeros) return init ? init() : storageArray(n, type);
+      const lanes = n * (type === 'uint' ? 1 : type === 'vec2' ? 2 : 4);
+      const view =
+        type === 'vec4' || type === 'vec2'
+          ? new Float32Array(zeros, 0, lanes)
+          : new Uint32Array(zeros, 0, lanes);
+      return storageArray(view, type);
+    };
+    this.compaction = zeros
+      ? new StrandCompaction({
+          R,
+          Ns,
+          strandsPerInstance: STRANDS_PER_INSTANCE,
+          shadowIndexCount: STRANDS_PER_INSTANCE * Math.ceil((R - 1) / SHADOW_POINT_STRIDE) * 6,
+          zeros,
+        })
+      : null;
 
     this.ctx = {
       G,
@@ -153,10 +180,14 @@ export class HairGroup {
       guidePrev: instancedArray(data.guides.initWorld.slice(), 'vec4') as N,
       guideFrames: instancedArray(Ng * 6, 'vec4') as N,
       profile: this.profile,
-      renderPos: instancedArray(Ns * R, 'vec4') as N,
-      renderColor: instancedArray(Ns * R, 'uvec4') as N,
-      strandHidden: instancedArray(Ns, 'uint') as N,
-      shadowHistory: instancedArray(new Float32Array(Ns * R * 2).fill(1), 'vec2') as N,
+      renderPos: gpuOnly(Ns * R, 'vec4'),
+      renderColor: gpuOnly(Ns * R, 'uvec4'),
+      strandHidden: gpuOnly(Ns, 'uint'),
+      // (Compacted, a strand's first drawn frame ignores its history, so zeros are fine there.)
+      shadowHistory: gpuOnly(Ns * R, 'vec2', () =>
+        instancedArray(new Float32Array(Ns * R * 2).fill(1), 'vec2'),
+      ),
+      ...(this.compaction ? { compact: this.compaction } : {}),
     };
 
     this.kernels = {
@@ -175,11 +206,16 @@ export class HairGroup {
     this.mesh.name = `hair:${this.name}`;
     this.mesh.renderOrder = 1;
 
-    this.depthMaterial = new HairDepthMaterial(R, this.ctx.renderPos, SHADOW_POINT_STRIDE);
-    this.shadowMesh = new THREE.Mesh(
-      createRibbonGeometry(Math.ceil((R - 1) / SHADOW_POINT_STRIDE) + 1),
-      this.depthMaterial,
+    const c = this.compaction;
+    this.depthMaterial = new HairDepthMaterial(
+      R,
+      this.ctx.renderPos,
+      SHADOW_POINT_STRIDE,
+      c ? { entry: (slot: N) => c.shadowEntry(slot), count: c.shadowCount() } : undefined,
     );
+    const shadowGeometry = createRibbonGeometry(Math.ceil((R - 1) / SHADOW_POINT_STRIDE) + 1);
+    if (c) shadowGeometry.setIndirect(c.args, c.shadowArgsOffset);
+    this.shadowMesh = new THREE.Mesh(shadowGeometry, this.depthMaterial);
     this.shadowMesh.frustumCulled = false;
     this.shadowMesh.layers.set(opts.shadowLayer);
     this.shadowMesh.name = `hair-shadow:${this.name}`;
@@ -206,8 +242,10 @@ export class HairGroup {
     let g = this.ribbons.get(stride);
     if (!g) {
       g = createRibbonGeometry(this.drawnPoints(stride));
+      if (this.compaction) g.setIndirect(this.compaction.args, this.compaction.drawArgsOffset);
       this.ribbons.set(stride, g);
     }
+    if (this.compaction) this.compaction.drawIndexCount.value = g.index!.count;
     return g;
   }
 
@@ -217,6 +255,9 @@ export class HairGroup {
     this.uniforms.drawStride.value = stride;
     this.mesh.geometry = this.ribbonGeometry(stride);
   }
+
+  /** Visible-strand lists and indirect arguments (null unless `compactStrands`). */
+  readonly compaction: StrandCompaction | null;
 
   /** Last frame's strand points and the kernel that saves them (allocated when TAA is first used). */
   private prevRenderPos: N = null;
@@ -247,12 +288,14 @@ export class HairGroup {
         .setName('hair.savePrevious');
       this.copyKernel.count = (this.activeStrands ?? Ns) * R;
     }
+    const c = this.compaction;
     return new HairMaterial({
       R: this.ctx.R,
       renderPos: this.ctx.renderPos,
       renderColor: this.ctx.renderColor,
       u: this.uniforms,
       prevRenderPos: this.prevRenderPos,
+      ...(c ? { list: { entry: (slot: N) => c.drawEntry(slot), count: c.drawCount() } } : {}),
     });
   }
 
@@ -317,6 +360,7 @@ export class HairGroup {
     this.guideLines.geometry.dispose();
     (this.guideLines.material as THREE.Material).dispose();
     for (const k of [...Object.values(this.kernels), this.copyKernel]) k?.dispose();
+    this.compaction?.dispose();
     const c = this.ctx;
     this.release(
       [
@@ -329,6 +373,7 @@ export class HairGroup {
         c.strandHidden,
         c.shadowHistory,
         this.prevRenderPos,
+        ...(this.compaction?.buffers() ?? []),
       ].filter((b) => b !== null),
     );
     releaseStatic(this.data, this.release);

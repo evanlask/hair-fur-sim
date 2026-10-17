@@ -2,6 +2,7 @@ import type { FolderApi } from 'tweakpane';
 
 import type { FrameInfo } from '../app/App';
 import { addHairBasics, addHairFolders, addWindFolder, alphabetical, num, toggle } from '../app/Gui';
+import type { QualityPreset } from '../app/quality';
 import { defaultGrassStyle } from '../hair/groom/styles/grassStyle';
 import { hairWind, mergeHairParams, type HairParamsData } from '../hair/params';
 import type { Example, ExampleContext } from './Example';
@@ -68,6 +69,23 @@ export function createFoxFurParams(substeps: number): HairParamsData {
   });
 }
 
+/** Phones and tablets (iPadOS reports itself as a Mac, but with touch). */
+const IS_MOBILE =
+  /iPhone|iPad|iPod|Android/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/**
+ * At the default quality a phone runs out of memory on the full field and two foxes (over 1 GB with three.js's CPU
+ * copies) and the tab is killed, so unless `?quality=` asks otherwise it grows a quarter of the strands, like 'low'.
+ */
+function foxQuality(quality: QualityPreset): { quality: QualityPreset; reduced: boolean } {
+  if (!IS_MOBILE || new URLSearchParams(location.search).has('quality')) return { quality, reduced: false };
+  const strandScale = Math.min(quality.strandScale, 0.25);
+  const guideScale = Math.min(quality.guideScale, 0.6);
+  const reduced = strandScale < quality.strandScale || guideScale < quality.guideScale;
+  return { quality: { ...quality, strandScale, guideScale }, reduced };
+}
+
 /** Fur on the animated Khronos Fox (CC0 model, CC BY 4.0 rig and animation). */
 export class FoxExample implements Example {
   readonly title = 'Fox';
@@ -102,9 +120,13 @@ export class FoxExample implements Example {
   /** The spawn in progress, and whether settings changed during it (spawns must not overlap). */
   private spawning: Promise<void> | null = null;
   private respawnPending = false;
+  /** Fewer strands than the quality preset asks for (phones, see foxQuality). */
+  private reduced = false;
 
-  async init(ctx: ExampleContext): Promise<void> {
-    this.ctx = ctx;
+  async init(baseCtx: ExampleContext): Promise<void> {
+    const { quality: scaled, reduced } = foxQuality(baseCtx.quality);
+    const ctx = (this.ctx = { ...baseCtx, quality: scaled });
+    this.reduced = reduced;
     const { app, gui, lights, quality } = ctx;
     this.params = createFoxFurParams(quality.substeps);
     this.grassParams = createGrassParams(quality.substeps, quality.strandScale);
@@ -232,7 +254,7 @@ export class FoxExample implements Example {
         if (this.grass) this.grass.colliders.radiusScale = this.settings.pushRadius;
       },
     );
-    const perf = { cull: true, lodDistance: 4.5 };
+    const perf = { cull: true, lodDistance: 3 };
     const syncLod = () => {
       for (const k of ['grass', 'stalks'] as const) {
         const st = this.grassParams[k].style;
@@ -465,6 +487,7 @@ export class FoxExample implements Example {
       `foxes ${this.foxes.length}   ${this.settings.animation}${this.settings.moving ? ' (moving)' : ''}`,
     ];
     if (this.grass) lines.push(this.grass.hud());
+    if (this.reduced) lines.push('phone: ¼ of the strands (add ?quality=high for all)');
     return lines;
   }
 }

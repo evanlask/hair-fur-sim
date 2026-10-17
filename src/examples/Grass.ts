@@ -116,7 +116,7 @@ export function createGrassParams(substeps: number, strandScale: number): GrassP
         taper: 2,
         // The field spans every depth: skip blades out of view and thin out distant ones (sub-pixel anyway).
         cullOffscreen: true,
-        lodDistance: 4.5,
+        lodDistance: 3,
       },
       shading: {
         ...shading,
@@ -162,7 +162,7 @@ export function createGrassParams(substeps: number, strandScale: number): GrassP
         taper: 7,
         // Stalks are sparse, so they thin out later than the grass.
         cullOffscreen: true,
-        lodDistance: 6,
+        lodDistance: 4,
       },
       shading: {
         ...shading,
@@ -245,6 +245,8 @@ export class GrassField {
       },
       // The field is far larger than a character, so its shadow map needs more texels.
       shadowResolution: Math.min(2048, quality.hairShadowSize * 2),
+      // Most of the field is off screen or thinned out at any time: only the blades kept are drawn and lit.
+      compactStrands: true,
     });
 
     // Thatch under the grass, blending back into the floor beyond it.

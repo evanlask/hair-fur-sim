@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 
 import type { App } from '../../app/App';
+import { IS_MAC, modHeld } from '../../util/platform';
 import {
   applyDab,
   changesDensity,
@@ -122,7 +123,8 @@ export class PaintController {
   }
 
   private onDown = (e: PointerEvent) => {
-    if (this.tool === 'navigate' || e.button !== 0 || e.altKey) return;
+    // Ctrl-click on a Mac is a right-click (the context menu opens), so it doesn't paint.
+    if (this.tool === 'navigate' || e.button !== 0 || e.altKey || (IS_MAC && e.ctrlKey)) return;
     const hit = this.pick(e.clientX, e.clientY);
     if (!hit) return;
     e.stopPropagation();
@@ -427,7 +429,7 @@ const TOOL_LABELS: Record<PaintTool, string> = {
 function sampleOf(e: PointerEvent): Sample {
   // Mice report 0.5 while pressed; only pens and touch have real pressure.
   const pressure = e.pointerType === 'mouse' ? 1 : Math.max(0.1, e.pressure || 0.5);
-  return { x: e.clientX, y: e.clientY, pressure, invert: e.ctrlKey || e.metaKey };
+  return { x: e.clientX, y: e.clientY, pressure, invert: modHeld(e) };
 }
 
 /** The paint vertex nearest a model-space point (within `reach`), or −1. */

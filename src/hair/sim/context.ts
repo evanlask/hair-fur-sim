@@ -1,5 +1,6 @@
 import type { ColliderSet } from '../colliders';
 import type { HairUniforms } from '../params';
+import type { StrandCompaction } from './compact';
 import type { N } from './tslUtil';
 
 /** Everything a group's kernels need (GPU buffers are TSL storage nodes). */
@@ -51,4 +52,6 @@ export interface GroupContext {
   strandHidden: N;
   /** Temporally smoothed self-shadow transmittance per render point (vec2: key side, far side). */
   shadowHistory: N;
+  /** Visible-strand lists (opt-in, see StrandCompaction); kernels and ribbons take the compacted path when set. */
+  compact?: StrandCompaction;
 }

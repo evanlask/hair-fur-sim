@@ -1,3 +1,4 @@
+import { IS_MAC } from '../../util/platform';
 import type { BrushSettings, Tool } from './brushes';
 import type { CurveExport } from './curveExport';
 import type { Layer } from './layers';
@@ -47,7 +48,7 @@ export interface StudioPanelHandlers extends LayerSectionHandlers {
 export type CameraView = 'front' | 'side' | 'back' | 'top';
 
 /** ⌘ / Ctrl, as the platform names it. */
-export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
+export const MOD = IS_MAC ? '⌘' : 'Ctrl';
 
 /** Tools in panel order, with their keys and what they do. */
 export const TOOLS: { tool: Tool; label: string; key: string; hint: string }[] = [

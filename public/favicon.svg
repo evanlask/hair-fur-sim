@@ -5,7 +5,7 @@
       <stop offset="1" stop-color="#d9822b" />
     </linearGradient>
   </defs>
-  <rect width="32" height="32" rx="7" fill="#14151b" />
+  <rect width="32" height="32" fill="#14151b" />
   <g fill="none" stroke="url(#g)" stroke-width="1.7" stroke-linecap="round">
     <path d="M21.5 16Q25.2 18.35 27.26 21.44" />
     <path d="M20.96 18.39Q23.27 22.11 23.78 25.78" />

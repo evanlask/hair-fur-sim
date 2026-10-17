@@ -25,17 +25,18 @@ export interface GrassStyleParams {
   seed: number;
 }
 
+// Counts follow the field's density-weighted area (85% of the 9 m field's at 7.5 m), so the grass stays as dense.
 export const defaultGrassStyle = (): GrassStyleParams => ({
-  radius: 9,
+  radius: 7.5,
   fade: 2,
   thinFrom: 4.5,
   height: 1,
   stalkHeight: 1,
   stalkAmount: 1,
-  guideCount: 70000,
-  strandCount: 1000000,
-  stalkGuides: 12000,
-  stalkStrands: 85000,
+  guideCount: 59000,
+  strandCount: 850000,
+  stalkGuides: 10000,
+  stalkStrands: 72000,
   seed: 11,
 });
 

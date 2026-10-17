@@ -57,6 +57,7 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
     strandHidden,
     colliders,
     view,
+    compact,
   } = ctx;
   const U = u as unknown as Record<string, N>;
   const rootSpace = ctx.interpSpace === 'root';
@@ -142,12 +143,13 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
         .or(rank.greaterThan(keep))
         .or(backFacing.and(s.greaterThanEqual(U.shadowStrandCount as N)));
 
-      If(culled, () => {
+      const collapse = () => {
         // Collapsed onto the root with a negative width: shading skips it and the ribbon degenerates.
         Loop({ start: uint(0), end: uint(R), type: 'uint', condition: '<' }, ({ i: j }: { i: N }) => {
           renderPos.element(s.mul(uint(R)).add(j)).assign(vec4(root, -1));
         });
-      }).Else(() => {
+      };
+      const build = () => {
         const prevOut = vec3(root).toVar();
         const T = vec3(SF.n).toVar();
         const ref = vec3(SF.t).toVar();
@@ -230,7 +232,17 @@ export function buildInterpolateKernel(ctx: GroupContext): N {
           renderPos.element(s.mul(uint(R)).add(j)).assign(vec4(outPos.add(curl).add(frizz), width));
           prevOut.assign(outPos);
         });
-      });
+      };
+      if (compact) {
+        // Compacted: culled strands are simply left out (nothing reads them); kept ones go on the lists.
+        If(culled.not(), () => {
+          If(s.lessThan(U.shadowStrandCount as N), () => compact.appendShadow(s));
+          If(backFacing.not(), () => compact.appendDraw(s));
+          build();
+        });
+      } else {
+        If(culled, collapse).Else(build);
+      }
     }) as N
   )()
     .compute(ctx.Ns, [64])

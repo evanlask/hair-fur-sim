@@ -171,6 +171,9 @@ export class HairSystem {
     const solves: N[] = [];
     const interps: N[] = [];
     const shades: N[] = [];
+    // Compacted groups: list finalizers (after interpolate) and indirectly dispatched shade kernels.
+    const finalizes: N[] = [];
+    const compactShades: HairGroup[] = [];
     for (const inst of this.instances) {
       inst.deformer.prepare();
       inst.colliders.update(inst.needsReset);
@@ -195,7 +198,12 @@ export class HairSystem {
         if (g.needsReset) resets.push(g.kernels.reset);
         if (inst.simulate) solves.push(g.kernels.solve);
         interps.push(g.kernels.interpolate);
-        shades.push(g.kernels.shade);
+        if (g.compaction) {
+          finalizes.push(g.compaction.finalize);
+          compactShades.push(g);
+        } else {
+          shades.push(g.kernels.shade);
+        }
         this.updateLod(inst, g);
       }
       inst.needsReset = false;
@@ -226,9 +234,14 @@ export class HairSystem {
       if (copies.length) void r.compute(copies);
       (hairFrame.value as number) = ((hairFrame.value as number) + 1) % 65536;
     }
-    if (!skip.interpolate && interps.length) void r.compute(interps);
+    if (!skip.interpolate && interps.length) {
+      for (const g of compactShades) g.compaction!.nextFrame();
+      void r.compute(interps);
+      if (finalizes.length) void r.compute(finalizes);
+    }
     if (!skip.shadows) this.renderShadowMaps();
     if (!skip.shade && shades.length) void r.compute(shades);
+    if (!skip.shade) for (const g of compactShades) void r.compute(g.kernels.shade, g.compaction!.args);
     // Disabled groups keep a pending reset for when they're turned back on.
     for (const g of this.groups) if (g.enabled) g.needsReset = false;
   }

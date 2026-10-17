@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 
 import type { HairUniforms } from '../params';
+import { FRESH_BIT } from '../sim/compact';
 import { tsl } from '../sim/tsl';
 import { pcgHash, safeNormalize, type N } from '../sim/tslUtil';
 
@@ -106,6 +107,17 @@ interface RibbonInputs {
    * Without it the tangent comes from neighbouring points.
    */
   shaded?: N;
+  /**
+   * Compacted strands (see StrandCompaction): batch slots index this list of strand indices, and slots past
+   * `count` collapse. Replaces the `strandCount` prefix.
+   */
+  list?: StrandList;
+}
+
+/** A list of strands to draw (entry at a slot) and its length, read from storage in the vertex stage. */
+export interface StrandList {
+  entry: (slot: N) => N;
+  count: N;
 }
 
 /**
@@ -123,11 +135,18 @@ function ribbonVertex(o: RibbonInputs): {
   shaded: N;
 } {
   const R = o.R;
-  const strand = instanceIndex.mul(uint(STRANDS_PER_INSTANCE)).add(uint((positionGeometry as N).z));
+  const slot = instanceIndex.mul(uint(STRANDS_PER_INSTANCE)).add(uint((positionGeometry as N).z));
+  const listCount = o.list ? o.list.count.toVar() : null;
+  const strand = o.list
+    ? o.list
+        .entry(min(slot, max(listCount, uint(1)).sub(1)))
+        .bitAnd(uint(~FRESH_BIT >>> 0))
+        .toVar()
+    : slot;
   const stride = typeof o.pointStride === 'number' ? uint(o.pointStride) : (o.pointStride ?? uint(1));
   const j = min(uint((positionGeometry as N).x).mul(stride), uint(R - 1));
   const sideSign = (positionGeometry as N).y;
-  const sRead = min(strand, max(o.strandCount, uint(1)).sub(1));
+  const sRead = o.list ? strand : min(strand, max(o.strandCount, uint(1)).sub(1));
   const base = sRead.mul(uint(R));
   const index = base.add(j);
   const p4 = o.renderPos.element(index).toVar();
@@ -162,7 +181,9 @@ function ribbonVertex(o: RibbonInputs): {
   const pos = p.add(side.mul(sideSign.mul(max(width, minW)).mul(0.5)));
   // Unused batch slots and culled strands (negative width) collapse to a degenerate point (zero-area triangles),
   // and so do points the shade kernel skipped (hidden strands: all zero, a lit point has a unit tangent).
-  let live: N = strand.lessThan(o.strandCount).and(p4.w.greaterThanEqual(0));
+  let live: N = (o.list ? slot.lessThan(listCount) : strand.lessThan(o.strandCount)).and(
+    p4.w.greaterThanEqual(0),
+  );
   if (shaded) live = live.and(shaded.z.bitOr(shaded.w).notEqual(uint(0)));
   return { pos: select(live, pos, vec3(0)), center: p, coverage, strand, j, index, shaded };
 }
@@ -174,6 +195,8 @@ export interface HairMaterialOptions {
   u: HairUniforms;
   /** Last frame's strand points (temporal coverage): feeds motion vectors for TAA. */
   prevRenderPos?: N;
+  /** Draw only these strands (compacted, see StrandCompaction). */
+  list?: StrandList;
 }
 
 /**
@@ -205,6 +228,7 @@ export class HairMaterial extends THREE.NodeMaterial {
           strandCount: U.strandCount,
           pointStride: U.drawStride,
           shaded: o.renderColor,
+          list: o.list,
         });
         const c = r.shaded;
         const rg = unpackHalf2x16(c.x);
@@ -288,7 +312,8 @@ export class HairDepthMaterial extends THREE.NodeMaterial {
   readonly widthScale = uniform(2.5);
   readonly strandCount = uniform(0, 'uint');
 
-  constructor(R: number, renderPos: N, pointStride: number) {
+  /** `list`: draw only these strands (compacted, see StrandCompaction) instead of the first `strandCount`. */
+  constructor(R: number, renderPos: N, pointStride: number, list?: StrandList) {
     super();
     this.lights = false;
     this.fog = false;
@@ -315,6 +340,7 @@ export class HairDepthMaterial extends THREE.NodeMaterial {
           minPixelWidth: float(2),
           strandCount: this.strandCount,
           pointStride,
+          list,
         });
         const clip = (cameraProjectionMatrix as N).mul((cameraViewMatrix as N).mul(vec4(r.pos, 1)));
         vDepth.assign(clip.z.div(clip.w));
